@@ -507,13 +507,19 @@ function onYouTubeIframeAPIReady() {
   S.ytReady = true;
 }
 
-// Destroy old player, create fresh one for the given videoId
-function createYTPlayer(videoId) {
+// Create player once on first use, then reuse with loadVideoById
+function playOnYT(videoId) {
   if (YTP) {
-    try { YTP.destroy(); } catch {}
-    YTP = null;
+    // Player already exists — just load the new video
+    try { YTP.loadVideoById(videoId); } catch { createFreshYTPlayer(videoId); }
+    return;
   }
-  // Re-create the container div (destroy removes it)
+  // First time — create the player
+  createFreshYTPlayer(videoId);
+}
+
+function createFreshYTPlayer(videoId) {
+  if (YTP) { try { YTP.destroy(); } catch {} YTP = null; }
   const wrap = document.getElementById('yt-player-wrap');
   const old = document.getElementById('yt-player');
   if (old) old.remove();
@@ -531,10 +537,7 @@ function createYTPlayer(videoId) {
       origin: location.origin,
     },
     events: {
-      onReady: (ev) => {
-        ev.target.setVolume(85);
-        ev.target.playVideo();
-      },
+      onReady: (ev) => { ev.target.setVolume(85); ev.target.playVideo(); },
       onStateChange: onYTState,
       onError: onYTError,
     },
@@ -702,7 +705,7 @@ function playTrack(t, q, qi) {
   }
 
   loadBar(true);
-  createYTPlayer(t.videoId);
+  playOnYT(t.videoId);
 }
 
 function togPlay() {
