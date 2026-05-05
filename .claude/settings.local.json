@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s \"https://invidious.slipfox.xyz/api/v1/search?q=lofi&type=video&fields=videoId,title,author,lengthSeconds,videoThumbnails\")",
+      "Bash(python -c ' *)",
+      "Bash(curl -s -L --max-time 10 -A \"Mozilla/5.0\" \"https://invidious.slipfox.xyz/api/v1/search?q=lofi&type=video\")",
+      "Bash(python gen_sonora.py)",
+      "Bash(python build.py)"
+    ]
+  }
+}

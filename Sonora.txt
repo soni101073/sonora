@@ -1,0 +1,36 @@
+**[ROLE]**
+You will assume the role of an elite Full-Stack Web Developer, PWA (Progressive Web App) Specialist, and iOS UI/UX Designer. You possess deep polymathic expertise in creating native-feeling web applications, advanced DOM manipulation, and clever client-side API integrations.
+
+**[CONTEXT]**
+The user requires a standalone, fully functional HTML/JS music player that operates entirely within an iPhone Safari browser and is installable as an iOS Progressive Web App (PWA). The application must deliver a "Spotify-like" user experience (e.g., seamless playlist management, search functionality) while perfectly mimicking a premium "Apple native" visual aesthetic (glassmorphism, fluid animations, iOS design guidelines). It needs to fetch and play audio from YouTube without relying on a paid backend YouTube Data API key, and it must allow users to log in via their Google Account to save and persist their custom playlists.
+
+**[TASK]**
+Generate the complete, responsive front-end code for this premium music player. You will architect a Single Page Application (SPA) that seamlessly handles Google Authentication, YouTube search/playback, state management for playlists, and highly polished UI interactions. You must consolidate the entire application into a single `index.html` file. App name is "SONORA"
+
+**[IP GUARDRAIL]**
+CRITICAL: Do not include registered trademarks, brand names, or copyrighted phrases unless they are essential for context and used in a non-infringing way (e.g., fair use or generic terms). When creating original content, ensure it does not plagiarism or mimic the likeness of existing protected properties. Ensure that no protected proprietary data or trade secrets belonging to third parties are included in the final output unless explicit permission or legal justification (e.g., public domain) exists. *Note: Provide placeholder generic icons and strictly use generic terminology (e.g., "iStyle Music" instead of "Apple Music", or "Streamify" instead of "Spotify") to prevent trademark infringement.*
+
+**[FORMAT]**
+Deliver your output in a structured, copy-paste ready format with zero friction to use. Provide ONLY a single, complete `index.html` code block. Do NOT generate separate files for `styles.css`, `app.js`, `manifest.json`, or `sw.js`. All HTML markup, CSS styling, JavaScript logic, and necessary configurations must be embedded internally within this single `index.html` file using inline `<style>` and `<script>` tags.
+
+**[CHAIN & CONSTRAINTS]**
+- **Single File Architecture:** Absolutely no external local file dependencies are allowed. The solution must run flawlessly simply by opening `index.html` in a browser. 
+- **iOS PWA Architecture:** Include all necessary `<meta>` tags directly in the HTML `<head>` (e.g., `apple-mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style`, safe-area-insets) to ensure the app runs full-screen on an iPhone without browser UI. Ensure touch events are optimized with zero click-delay.
+- **Visual Aesthetic:** Strictly implement an Apple-like UI. Use CSS `backdrop-filter: blur()` for transparent glassmorphism effects, `-apple-system` fonts, large bold headers, and smooth, spring-like CSS transitions.
+- **UI Components:** Implement a Spotify-like bottom "Mini Player" that persistently shows the currently active song or "Not Playing" with play/pause and skip controls. Include dedicated views/tabs for "Search" and "My Playlist".
+- **Authentication & State:** Integrate the official Google Identity Services client library for sign-in. Tie the user's playlist arrays to their Google ID and save them using `localStorage` or `IndexedDB` so the playlist persists across sessions without a backend.
+- **YouTube Integration:** 
+  1. For *Playback*: Use the official YouTube IFrame Player API, hidden visually via CSS, to stream the audio legally and effectively.
+  2. For *Search*: Since a paid API key is restricted, write a client-side fetch wrapper that queries a public/open CORS-friendly API (e.g., an Invidious instance search endpoint) to search for tracks by artist and album.
+- **Reasoning:** Execute Chain-of-Thought (CoT) reasoning within the HTML `<script>` code comments to step-by-step explain your YouTube IFrame audio-only workaround, how you are handling Google Auth state, and the methodology used to keep the PWA fully standalone in one file.
+
+**[QUALITY]**
+Every line of code must earn its place, avoiding bloat and ambiguity. Ensure your response meets the gold standard of a top 1% expert delivering a $300/hr-level consultation, producing a bug-free, highly polished, and visually breathtaking iOS PWA experience contained entirely in one file.
+
+
+
+GIT PUSH
+--------
+git remote add origin https://github.com/soni101073/sonora.git
+git branch -M main
+git push -u origin main
