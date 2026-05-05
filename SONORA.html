@@ -697,7 +697,8 @@ async function qPlay(q) {
 // ── Playback — YouTube IFrame Player API ──
 function playTrack(t, q, qi) {
   S.track=t; S.queue=q||[t]; S.qi=qi??0;
-  showMini(); updTrackUI();
+  S.playing = false; stopTick();
+  showMini(); updTrackUI(); updPlayUI();
 
   if (!ytAPILoaded) {
     toast('Player loading — try again in a moment');
@@ -710,8 +711,10 @@ function playTrack(t, q, qi) {
 
 function togPlay() {
   if (!S.track || !YTP) return;
-  if (S.playing) { YTP.pauseVideo(); }
-  else { YTP.playVideo(); }
+  try {
+    if (S.playing) { YTP.pauseVideo(); }
+    else { YTP.playVideo(); }
+  } catch(e) { console.warn('togPlay error', e); }
 }
 function nextT() {
   if (!S.queue.length) return;
