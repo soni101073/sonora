@@ -341,11 +341,44 @@ svg{display:block;flex-shrink:0}
       <div style="height:22px"></div>
       <div class="sec" style="padding:0 20px">Quick Play</div>
       <div class="qg" id="qtiles"></div>
-      <div class="feat" onclick="switchTab('search')">
-        <div class="feat-grad"></div>
+      <div class="feat" onclick="qPlay('Latest Hindi Songs')">
+        <div class="feat-grad" style="background:linear-gradient(135deg,#c21500,#ffc500)"></div>
         <div class="feat-body">
           <div class="feat-kicker">Discover</div>
-          <div class="feat-title">Find Any Song</div>
+          <div class="feat-title">Latest Hindi Songs</div>
+          <div class="feat-sub">Full-length tracks streamed via YouTube</div>
+        </div>
+        <button class="feat-cta"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12-7.5z"/></svg></button>
+      </div>
+      <div style="height:12px"></div>
+      
+      <div class="feat" onclick="qPlay('Latest English Songs')">
+        <div class="feat-grad" style="background:linear-gradient(135deg,#005c97,#363795)"></div>
+        <div class="feat-body">
+          <div class="feat-kicker">Discover</div>
+          <div class="feat-title">Latest English Songs</div>
+          <div class="feat-sub">Full-length tracks streamed via YouTube</div>
+        </div>
+        <button class="feat-cta"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12-7.5z"/></svg></button>
+      </div>
+      <div style="height:12px"></div>
+      
+      <div class="feat" onclick="qPlay('Bollywood Dance Anthems')">
+        <div class="feat-grad" style="background:linear-gradient(135deg,#11998e,#38ef7d)"></div>
+        <div class="feat-body">
+          <div class="feat-kicker">Discover</div>
+          <div class="feat-title">Bollywood Dance Anthems</div>
+          <div class="feat-sub">Full-length tracks streamed via YouTube</div>
+        </div>
+        <button class="feat-cta"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12-7.5z"/></svg></button>
+      </div>
+      <div style="height:12px"></div>
+      
+      <div class="feat" onclick="qPlay('Krishna Bhajans')">
+        <div class="feat-grad" style="background:linear-gradient(135deg,#ff9966,#ff5e62)"></div>
+        <div class="feat-body">
+          <div class="feat-kicker">Discover</div>
+          <div class="feat-title">Krishna Bhajans</div>
           <div class="feat-sub">Full-length tracks streamed via YouTube</div>
         </div>
         <button class="feat-cta"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12-7.5z"/></svg></button>
@@ -771,6 +804,7 @@ function updPlayUI() {
   document.getElementById('fp-ic').innerHTML = S.playing ? ICO_PAUSE_L : ICO_PLAY_L;
   document.getElementById('mp-btn').innerHTML = S.playing ? ICO_PAUSE : ICO_PLAY;
   document.getElementById('fp-art').classList.toggle('play', S.playing);
+  updMediaSession();
 }
 function updTrackUI() {
   const t=S.track; if (!t) return;
@@ -977,6 +1011,21 @@ let tT=null;
 function toast(msg){const el=document.getElementById('toast');el.textContent=msg;el.classList.add('on');clearTimeout(tT);tT=setTimeout(()=>el.classList.remove('on'),2500);}
 
 // ── Service Worker ──
+// Media Session for iOS Lock Screen
+function updMediaSession() {
+  if ('mediaSession' in navigator && S.track) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: S.track.title,
+      artist: S.track.artist,
+      artwork: [{ src: S.track.thumb || '', sizes: '512x512', type: 'image/jpeg' }]
+    });
+    navigator.mediaSession.setActionHandler('play', togPlay);
+    navigator.mediaSession.setActionHandler('pause', togPlay);
+    navigator.mediaSession.setActionHandler('previoustrack', prevT);
+    navigator.mediaSession.setActionHandler('nexttrack', nextT);
+  }
+}
+
 if('serviceWorker' in navigator){
   const sw=`const C='sn5';self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll([location.pathname])));self.skipWaiting();});self.addEventListener('activate',()=>self.clients.claim());self.addEventListener('fetch',e=>{if(e.request.url.includes('invidious')||e.request.url.includes('yewtu')||e.request.url.includes('corsproxy'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));})`  ;
   navigator.serviceWorker.register(URL.createObjectURL(new Blob([sw],{type:'application/javascript'}))).catch(()=>{});
