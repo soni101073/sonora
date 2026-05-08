@@ -467,6 +467,7 @@ svg{display:block;flex-shrink:0}
     </button>
   </div>
 <div id="yt-player-wrap" style="position:fixed;top:-200px;left:-200px;width:1px;height:1px;overflow:hidden;pointer-events:none"><div id="yt-player"></div></div>
+<audio id="bg-silence" loop playsinline src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"></audio>
 
 <!-- Folder picker modal -->
 <div id="fpick" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.7);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);align-items:center;justify-content:center">
@@ -579,16 +580,20 @@ function createFreshYTPlayer(videoId) {
 
 function onYTState(e) {
   const st = e.data;
+  const bgAudio = document.getElementById('bg-silence');
   if (st === YT.PlayerState.PLAYING) {
     S.playing = true; updPlayUI(); startTick();
+    bgAudio.play().catch(()=>{});
     try {
       const dur = YTP.getDuration();
       if (dur > 0) document.getElementById('fp-dur').textContent = fmt(dur);
     } catch {}
   } else if (st === YT.PlayerState.PAUSED) {
     S.playing = false; updPlayUI(); stopTick();
+    bgAudio.pause();
   } else if (st === YT.PlayerState.ENDED) {
     S.playing = false; updPlayUI(); stopTick();
+    bgAudio.pause();
     S.rep ? (YTP.seekTo(0), YTP.playVideo()) : nextT();
   } else if (st === YT.PlayerState.BUFFERING) {
     loadBar(true);
@@ -732,6 +737,7 @@ function playTrack(t, q, qi) {
   S.track=t; S.queue=q||[t]; S.qi=qi??0;
   S.playing = false; stopTick();
   showMini(); updTrackUI(); updPlayUI();
+  document.getElementById('bg-silence').play().catch(()=>{});
 
   if (!ytAPILoaded) {
     toast('Player loading — try again in a moment');
@@ -745,8 +751,13 @@ function playTrack(t, q, qi) {
 function togPlay() {
   if (!S.track || !YTP) return;
   try {
-    if (S.playing) { YTP.pauseVideo(); }
-    else { YTP.playVideo(); }
+    if (S.playing) { 
+      YTP.pauseVideo(); 
+      document.getElementById('bg-silence').pause(); 
+    } else { 
+      YTP.playVideo(); 
+      document.getElementById('bg-silence').play().catch(()=>{}); 
+    }
   } catch(e) { console.warn('togPlay error', e); }
 }
 function nextT() {
