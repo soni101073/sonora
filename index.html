@@ -777,6 +777,13 @@ function seekTo(v) {
     if (dur > 0) YTP.seekTo((v/100)*dur, true);
   } catch {}
 }
+function seekBy(offset) {
+  try {
+    const dur = YTP.getDuration();
+    const cur = YTP.getCurrentTime();
+    if (dur > 0) YTP.seekTo(Math.max(0, Math.min(cur + offset, dur)), true);
+  } catch {}
+}
 function setVol(v) { try { YTP.setVolume(v); } catch {} }
 function toggleSh() { S.shuf=!S.shuf; document.getElementById('btn-sh').classList.toggle('on',S.shuf); toast(S.shuf?'Shuffle On':'Shuffle Off'); }
 function toggleRp() { S.rep=!S.rep; document.getElementById('btn-rp').classList.toggle('on',S.rep); toast(S.rep?'Repeat On':'Repeat Off'); }
@@ -804,6 +811,13 @@ function startTick() {
       document.getElementById('mini-bar').style.width=p+'%';
       document.getElementById('fp-cur').textContent=fmt(cur);
       document.getElementById('fp-dur').textContent=fmt(dur);
+      if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
+        navigator.mediaSession.setPositionState({
+          duration: dur,
+          playbackRate: 1,
+          position: cur
+        });
+      }
     } catch {}
   }, 500);
 }
@@ -1034,6 +1048,8 @@ function updMediaSession() {
     navigator.mediaSession.setActionHandler('pause', togPlay);
     navigator.mediaSession.setActionHandler('previoustrack', prevT);
     navigator.mediaSession.setActionHandler('nexttrack', nextT);
+    navigator.mediaSession.setActionHandler('seekforward', () => seekBy(15));
+    navigator.mediaSession.setActionHandler('seekbackward', () => seekBy(-15));
   }
 }
 
