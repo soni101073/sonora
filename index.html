@@ -636,22 +636,37 @@ async function getStreamUrl(videoId) {
     for (let a = 0; a < INV.length; a++) {
       const base = INV[(invI + a) % INV.length];
       let url = base + '/api/v1/videos/' + videoId + '?fields=' + fields;
-      if (pass === 1) url = PROXY + encodeURIComponent(url);
+      // Do not use corsproxy for the video stream metadata fetch, 
+      // because otherwise Invidious returns a googlevideo.com URL bound to the proxy's IP, 
+      // which gives 403 Forbidden when the client tries to play it.
+      if (pass === 1) {
+        // As a fallback on second pass, just return the direct proxied stream by Invidious
+        return base + '/latest_version?id=' + videoId + '&itag=140';
+      }
       try {
-        const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
         if (!r.ok) continue;
         const data = await r.json();
         const af = data.adaptiveFormats || [];
-        // Prefer audio-only AAC/MP4 — best iOS compatibility
+        
+        let foundUrl = null;
         const mp4 = af.filter(f => f.type && f.type.startsWith('audio/mp4'))
                       .sort((a, b) => (b.bitrate||0) - (a.bitrate||0));
-        if (mp4[0] && mp4[0].url) { invI = (invI+a) % INV.length; return mp4[0].url; }
-        // Fallback: any audio-only stream
-        const any = af.find(f => f.type && f.type.startsWith('audio/'));
-        if (any && any.url) return any.url;
-        // Last resort: combined video+audio stream
-        const fs = data.formatStreams || [];
-        if (fs[0] && fs[0].url) return fs[0].url;
+                      
+        if (mp4[0] && mp4[0].url) { foundUrl = mp4[0].url; }
+        else {
+          const any = af.find(f => f.type && f.type.startsWith('audio/'));
+          if (any && any.url) foundUrl = any.url;
+          else {
+            const fs = data.formatStreams || [];
+            if (fs[0] && fs[0].url) foundUrl = fs[0].url;
+          }
+        }
+        
+        if (foundUrl) {
+          invI = (invI+a) % INV.length;
+          return foundUrl;
+        }
       } catch(e) {}
     }
   }
