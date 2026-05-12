@@ -604,6 +604,18 @@ const S = {
 // We fetch a direct audio stream URL from Invidious and play it natively.
 let _audio = null;
 
+// iOS Safari blocks audio.play() after async gaps (gesture context expires in ~1s).
+// Fix: on first touch, play a silent throwaway element to permanently unlock the
+// audio session for this page — subsequent play() calls work even after long awaits.
+(function iosUnlock() {
+  const handler = () => {
+    const t = new Audio();
+    t.play().catch(() => {});
+    document.removeEventListener('touchstart', handler);
+  };
+  document.addEventListener('touchstart', handler, { once: true, passive: true });
+})();
+
 function getAudio() {
   if (_audio) return _audio;
   _audio = new Audio();
