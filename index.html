@@ -2107,6 +2107,9 @@
       // iOS only allows background/lock-screen audio from native <audio> elements.
       // We fetch a direct audio stream URL from Invidious and play it natively.
       let _audio = null;
+      // Fallback URL list for the current track — cycled on audio error
+      let _streamUrls = [];
+      let _streamIdx = 0;
 
       function getAudio() {
         if (_audio) return _audio;
@@ -2136,6 +2139,14 @@
         _audio.addEventListener("waiting", () => loadBar(true));
         _audio.addEventListener("canplay", () => loadBar(false));
         _audio.addEventListener("error", () => {
+          // Try next Invidious instance before giving up
+          if (_streamIdx + 1 < _streamUrls.length) {
+            _streamIdx++;
+            _audio.src = _streamUrls[_streamIdx];
+            _audio.currentTime = 0;
+            _audio.play().catch(() => {});
+            return;
+          }
           S.playing = false;
           updPlayUI();
           stopTick();
@@ -2146,64 +2157,22 @@
         return _audio;
       }
 
-      async function getStreamUrl(videoId) {
-        const fields = "adaptiveFormats,formatStreams";
-        for (let pass = 0; pass < 2; pass++) {
-          for (let a = 0; a < INV.length; a++) {
-            const base = INV[(invI + a) % INV.length];
-            let url = base + "/api/v1/videos/" + videoId + "?fields=" + fields + "&local=true";
-            if (pass === 1) url = PROXY + encodeURIComponent(url);
-            try {
-              const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 10000);
-              const r = await fetch(url, {
-                signal: controller.signal,
-              });
-              clearTimeout(timeoutId);
-              if (!r.ok) continue;
-              const data = await r.json();
-              const af = data.adaptiveFormats || [];
-              const mp4 = af
-                .filter((f) => f.type && f.type.startsWith("audio/mp4"))
-                .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-              if (mp4[0] && mp4[0].url) {
-                invI = (invI + a) % INV.length;
-                return mp4[0].url;
-              }
-              const any = af.find((f) => f.type && f.type.startsWith("audio/"));
-              if (any && any.url) {
-                invI = (invI + a) % INV.length;
-                return any.url;
-              }
-              const fs = data.formatStreams || [];
-              if (fs[0] && fs[0].url) {
-                invI = (invI + a) % INV.length;
-                return fs[0].url;
-              }
-            } catch (e) {}
-          }
-        }
-        return null;
-      }
-
-      async function playOnNative(videoId) {
+      // playOnNative is intentionally synchronous up to audio.play() so that
+      // iOS Safari's gesture context is not lost across async network waits.
+      // We build /latest_version URLs for all instances and let the audio
+      // element's error event cycle through them automatically.
+      function playOnNative(videoId) {
         const audio = getAudio();
-        const url = await getStreamUrl(videoId);
-        if (!url) {
-          toast("Could not load stream — try another track");
-          loadBar(false);
-          S.playing = false;
-          updPlayUI();
-          return;
-        }
-        audio.src = url;
+        _streamUrls = INV.map(
+          (base) => base + "/latest_version?id=" + videoId + "&itag=140"
+        );
+        _streamIdx = 0;
+        audio.src = _streamUrls[0];
         audio.currentTime = 0;
-        try {
-          await audio.play();
-        } catch (e) {
+        audio.play().catch(() => {
           toast("Tap play to resume");
           loadBar(false);
-        }
+        });
       }
 
       // ── Welcome ──
