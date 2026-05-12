@@ -641,8 +641,8 @@ async function getStreamUrl(videoId) {
         // Use HEAD to check liveness; skip dead instances instead of returning immediately.
         try {
           const testUrl = base + '/latest_version?id=' + videoId + '&itag=140';
-          const r = await fetch(testUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
-          if (r.ok) { invI = (invI + a) % INV.length; return testUrl; }
+          await fetch(testUrl, { mode: 'no-cors', signal: AbortSignal.timeout(5000) });
+          invI = (invI + a) % INV.length; return testUrl;
         } catch(e) {}
         continue;
       }
