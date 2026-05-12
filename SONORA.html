@@ -635,7 +635,7 @@ async function getStreamUrl(videoId) {
   for (let pass = 0; pass < 2; pass++) {
     for (let a = 0; a < INV.length; a++) {
       const base = INV[(invI + a) % INV.length];
-      let url = base + '/api/v1/videos/' + videoId + '?fields=' + fields;
+      let url = base + '/api/v1/videos/' + videoId + '?fields=' + fields + '&local=true';
       if (pass === 1) {
         // Probe /latest_version (Invidious-proxied stream, no IP-binding issue).
         // Use HEAD to check liveness; skip dead instances instead of returning immediately.
