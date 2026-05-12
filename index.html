@@ -2151,7 +2151,7 @@
         for (let pass = 0; pass < 2; pass++) {
           for (let a = 0; a < INV.length; a++) {
             const base = INV[(invI + a) % INV.length];
-            let url = base + "/api/v1/videos/" + videoId + "?fields=" + fields;
+            let url = base + "/api/v1/videos/" + videoId + "?fields=" + fields + "&local=true";
             if (pass === 1) url = PROXY + encodeURIComponent(url);
             try {
               const controller = new AbortController();
