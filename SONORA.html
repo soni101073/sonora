@@ -636,12 +636,15 @@ async function getStreamUrl(videoId) {
     for (let a = 0; a < INV.length; a++) {
       const base = INV[(invI + a) % INV.length];
       let url = base + '/api/v1/videos/' + videoId + '?fields=' + fields;
-      // Do not use corsproxy for the video stream metadata fetch, 
-      // because otherwise Invidious returns a googlevideo.com URL bound to the proxy's IP, 
-      // which gives 403 Forbidden when the client tries to play it.
       if (pass === 1) {
-        // As a fallback on second pass, just return the direct proxied stream by Invidious
-        return base + '/latest_version?id=' + videoId + '&itag=140';
+        // Probe /latest_version (Invidious-proxied stream, no IP-binding issue).
+        // Use HEAD to check liveness; skip dead instances instead of returning immediately.
+        try {
+          const testUrl = base + '/latest_version?id=' + videoId + '&itag=140';
+          const r = await fetch(testUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) });
+          if (r.ok) { invI = (invI + a) % INV.length; return testUrl; }
+        } catch(e) {}
+        continue;
       }
       try {
         const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
