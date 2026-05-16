@@ -1312,6 +1312,8 @@
         transform: translateX(-50%) translateY(0);
       }
     </style>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://www.youtube.com/iframe_api" async></script>
   </head>
   <body>
     <!-- Loading bar (top, appears while fetching audio) -->
@@ -2103,78 +2105,97 @@
         ytReady: false,
       };
 
-      // ── Native Audio Engine (required for iOS lock screen playback) ──
-      // iOS only allows background/lock-screen audio from native <audio> elements.
-      // We fetch a direct audio stream URL from Invidious and play it natively.
-      let _audio = null;
-      // Fallback URL list for the current track — cycled on audio error
-      let _streamUrls = [];
-      let _streamIdx = 0;
+      // ── YouTube IFrame Engine ──
+      let __ytPlayer = null;
+      let __ctx = null;
+      
+      window.onYouTubeIframeAPIReady = function() {
+        __ytPlayer = new YT.Player('yt-player', {
+          height: '10',
+          width: '10',
+          videoId: '',
+          playerVars: { autoplay: 0, controls: 0, disablekb: 1, fs: 0, rel: 0, playsinline: 1 },
+          events: {
+            onReady: (e) => { S.ytReady = true; },
+            onStateChange: onYTStateChange,
+            onError: onYTError
+          }
+        });
+      };
+      
+      function ensureAudioContext() {
+        if (!__ctx) {
+          __ctx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (__ctx.state === 'suspended') {
+          __ctx.resume();
+        }
+        // Play silent buffer for iOS keep-alive
+        const buf = __ctx.createBuffer(1, 1, 22050);
+        const src = __ctx.createBufferSource();
+        src.buffer = buf;
+        src.connect(__ctx.destination);
+        src.start(0);
+      }
 
-      function getAudio() {
-        if (_audio) return _audio;
-        _audio = new Audio();
-        _audio.preload = "auto";
-        _audio.volume = 0.85;
-        _audio.addEventListener("play", () => {
+      function onYTStateChange(e) {
+        if (e.data === YT.PlayerState.PLAYING) {
           S.playing = true;
           updPlayUI();
           startTick();
           loadBar(false);
-        });
-        _audio.addEventListener("pause", () => {
+          ensureAudioContext();
+        } else if (e.data === YT.PlayerState.PAUSED) {
           S.playing = false;
           updPlayUI();
           stopTick();
-        });
-        _audio.addEventListener("ended", () => {
+        } else if (e.data === YT.PlayerState.ENDED) {
           S.playing = false;
           updPlayUI();
           stopTick();
           if (S.rep) {
-            _audio.currentTime = 0;
-            _audio.play().catch(() => {});
-          } else nextT();
-        });
-        _audio.addEventListener("waiting", () => loadBar(true));
-        _audio.addEventListener("canplay", () => loadBar(false));
-        _audio.addEventListener("error", () => {
-          // Try next Invidious instance before giving up
-          if (_streamIdx + 1 < _streamUrls.length) {
-            _streamIdx++;
-            _audio.src = _streamUrls[_streamIdx];
-            _audio.currentTime = 0;
-            _audio.play().catch(() => {});
-            return;
+            __ytPlayer.seekTo(0);
+            __ytPlayer.playVideo();
+          } else {
+            nextT();
           }
-          S.playing = false;
-          updPlayUI();
-          stopTick();
-          loadBar(false);
-          toast("Stream error — skipping...");
-          setTimeout(() => nextT(), 1500);
-        });
-        return _audio;
+        }
       }
 
-      // playOnNative is intentionally synchronous up to audio.play() so that
-      // iOS Safari's gesture context is not lost across async network waits.
-      // We build /latest_version URLs for all instances and let the audio
-      // element's error event cycle through them automatically.
+      function onYTError(e) {
+        S.playing = false;
+        updPlayUI();
+        stopTick();
+        loadBar(false);
+        toast("Stream error — skipping...");
+        setTimeout(() => nextT(), 1500);
+      }
+
       function playOnNative(videoId) {
-        const audio = getAudio();
-        _streamUrls = INV.map(
-          (base) => base + "/latest_version?id=" + videoId + "&itag=140"
-        );
-        _streamIdx = 0;
-        audio.src = _streamUrls[0];
-        audio.currentTime = 0;
-        audio.play().catch(() => {
-          toast("Tap play to resume");
-          loadBar(false);
-        });
+        if (!S.ytReady || !__ytPlayer) {
+          toast("Player not ready, wait a sec...");
+          return;
+        }
+        ensureAudioContext();
+        __ytPlayer.loadVideoById(videoId);
       }
 
+      function handleCredentialResponse(response) {
+        // Decode JWT payload
+        const base64Url = response.credential.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+        const p = JSON.parse(jsonPayload);
+        S.user = p.name;
+        localStorage.setItem("sonora_user", S.user);
+        document.getElementById("welcome").classList.add("out");
+        setTimeout(() => document.getElementById("welcome").style.display = "none", 580);
+        document.getElementById("shell").classList.add("ready");
+        updHomeUI();
+      }
+      
       // ── Welcome ──
       function launch(skip) {
         const name = skip ? "" : document.getElementById("wlc-in").value.trim();
@@ -2373,10 +2394,9 @@
       }
 
       function togPlay() {
-        if (!S.track) return;
-        const audio = getAudio();
-        if (S.playing) audio.pause();
-        else audio.play().catch(() => {});
+        if (!S.track || !__ytPlayer) return;
+        if (S.playing) __ytPlayer.pauseVideo();
+        else __ytPlayer.playVideo();
       }
       function nextT() {
         if (!S.queue.length) return;
@@ -2386,9 +2406,8 @@
         playTrack(S.queue[S.qi], S.queue, S.qi);
       }
       function prevT() {
-        const audio = getAudio();
-        if (audio.currentTime > 3) {
-          audio.currentTime = 0;
+        if (__ytPlayer && __ytPlayer.getCurrentTime() > 3) {
+          __ytPlayer.seekTo(0);
           return;
         }
         if (!S.queue.length) return;
@@ -2396,11 +2415,10 @@
         playTrack(S.queue[S.qi], S.queue, S.qi);
       }
       function seekTo(v) {
-        const audio = getAudio();
-        if (audio.duration > 0) audio.currentTime = (v / 100) * audio.duration;
+        if (__ytPlayer && __ytPlayer.getDuration() > 0) __ytPlayer.seekTo((v / 100) * __ytPlayer.getDuration(), true);
       }
       function setVol(v) {
-        getAudio().volume = v / 100;
+        if (__ytPlayer) __ytPlayer.setVolume(v);
       }
       function toggleSh() {
         S.shuf = !S.shuf;
@@ -2433,9 +2451,9 @@
       function startTick() {
         stopTick();
         S.tick = setInterval(() => {
-          if (!S.playing || !_audio) return;
-          const dur = _audio.duration;
-          const cur = _audio.currentTime;
+          if (!S.playing || !__ytPlayer) return;
+          const dur = __ytPlayer.getDuration();
+          const cur = __ytPlayer.getCurrentTime();
           if (!dur || isNaN(dur) || dur <= 0) return;
           const p = (cur / dur) * 100;
           const sk = document.getElementById("fp-sk");
