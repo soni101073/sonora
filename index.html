@@ -2866,61 +2866,161 @@
         tT = setTimeout(() => el.classList.remove("on"), 2500);
       }
 
-      // ── iOS Background Playback — Silent AudioContext Heartbeat ──
-      // iOS suspends audio from iframes when the screen locks. A continuously
-      // scheduled Web Audio buffer tricks iOS into keeping the audio session alive,
-      // allowing the YouTube iframe to continue playing through the lock screen.
-      let _iosCtx = null;
-      function startSilentAudio() {
-        if (_iosCtx) {
-          if (_iosCtx.state === "suspended") _iosCtx.resume().catch(() => {});
-          return;
-        }
-        try {
-          const AC = window.AudioContext || window.webkitAudioContext;
-          if (!AC) return;
-          _iosCtx = new AC();
-          const schedule = () => {
-            if (!_iosCtx) return;
-            const buf = _iosCtx.createBuffer(
-              1,
-              Math.ceil(_iosCtx.sampleRate * 0.1),
-              _iosCtx.sampleRate,
-            );
+      // ── iOS Background Playback — Dual-layer Audio Session Keep-alive ──
+      //
+      // STRATEGY: iOS kills YouTube iframe audio when the screen locks or the
+      // user switches apps, UNLESS the page holds an active audio session.
+      // We use TWO complementary layers so one always survives:
+      //
+      //  Layer 1 — Hidden <audio> element looping a 1-sample silent WAV.
+      //    iOS treats a looping HTMLAudioElement as a music player and keeps
+      //    the audio session alive across lock/unlock and app-switch cycles.
+      //    This is the same mechanism Spotify's PWA uses.
+      //
+      //  Layer 2 — Web Audio API silent buffer loop (keepalive heartbeat).
+      //    Schedules a fresh silent BufferSource every 25 s via setInterval
+      //    instead of relying on src.onended (which iOS never fires when the
+      //    context is suspended). If the context goes suspended we resume() it.
+      //
+      // Together these keep the iOS audio session alive without requiring a
+      // native app or a Service Worker with background-sync.
+
+      // Minimal silent WAV (1 sample, 44100 Hz, mono, 16-bit PCM) as data URI
+      const SILENT_WAV =
+        "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+
+      let _silentEl = null;   // Layer 1 – HTMLAudioElement
+      let _iosCtx   = null;   // Layer 2 – WebAudioContext
+      let _iosTimer = null;   // Layer 2 – keepalive interval
+
+      function _scheduleWebAudioPulse() {
+        // Fire a new zero-amplitude buffer every 25 s so the context stays warm.
+        // Using setInterval instead of onended prevents the loop from dying when
+        // iOS suspends the context (onended is never dispatched in that case).
+        if (_iosTimer) return;
+        _iosTimer = setInterval(() => {
+          if (!_iosCtx) return;
+          if (_iosCtx.state === "suspended") {
+            _iosCtx.resume().catch(() => {});
+            return;
+          }
+          try {
+            const buf = _iosCtx.createBuffer(1, 1, _iosCtx.sampleRate);
             const src = _iosCtx.createBufferSource();
             src.buffer = buf;
             src.connect(_iosCtx.destination);
             src.start(0);
-            src.onended = () => setTimeout(schedule, 200);
-          };
-          schedule();
+          } catch (e) {}
+        }, 25000);
+      }
+
+      function startSilentAudio() {
+        // ── Layer 1: looping HTMLAudioElement ──
+        if (!_silentEl) {
+          try {
+            _silentEl = new Audio(SILENT_WAV);
+            _silentEl.loop    = true;
+            _silentEl.volume  = 0.001; // near-zero but non-zero so iOS counts it
+            _silentEl.setAttribute("playsinline", "");
+            document.body.appendChild(_silentEl);
+          } catch (e) { _silentEl = null; }
+        }
+        if (_silentEl && _silentEl.paused) {
+          _silentEl.play().catch(() => {});
+        }
+
+        // ── Layer 2: Web Audio API ──
+        try {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return;
+          if (!_iosCtx) {
+            _iosCtx = new AC();
+            // Fire one immediate pulse to unlock the context on first user gesture
+            const buf = _iosCtx.createBuffer(1, 1, _iosCtx.sampleRate);
+            const src = _iosCtx.createBufferSource();
+            src.buffer = buf;
+            src.connect(_iosCtx.destination);
+            src.start(0);
+          }
           if (_iosCtx.state === "suspended") _iosCtx.resume().catch(() => {});
+          _scheduleWebAudioPulse();
         } catch (e) {}
       }
 
-      // Resume audio session + YouTube player when returning from background/lock screen
+      function resumeSilentAudio() {
+        // Called on every visibility/pageshow event — cheaply re-arms both layers
+        if (_silentEl && _silentEl.paused) {
+          _silentEl.play().catch(() => {});
+        }
+        if (_iosCtx) {
+          if (_iosCtx.state === "suspended") _iosCtx.resume().catch(() => {});
+        }
+      }
+
+      // ── Resume from background / lock screen ──
+      // iOS fires visibilitychange when the screen locks/unlocks AND when the
+      // user switches apps. We re-arm both silent-audio layers and, if the
+      // state machine says we were playing, kick the YouTube player.
       document.addEventListener("visibilitychange", () => {
-        if (_iosCtx && _iosCtx.state === "suspended")
-          _iosCtx.resume().catch(() => {});
-        if (!document.hidden && S.playing && _audio && _audio.paused) {
+        resumeSilentAudio(); // re-arm both audio session layers
+        if (!document.hidden && S.playing && __ytPlayer) {
           setTimeout(() => {
-            _audio.play().catch(() => {});
+            try {
+              if (__ytPlayer.getPlayerState() !== YT.PlayerState.PLAYING) {
+                __ytPlayer.playVideo();
+              }
+            } catch (e) {}
           }, 400);
         }
       });
 
-      // pageshow handles iOS PWA suspend/resume cycle
+      // pagehide — iOS PWA fires this (not unload) when app is backgrounded
+      window.addEventListener("pagehide", () => {
+        // Nothing to do here; resumeSilentAudio() in pageshow/visibilitychange
+        // will restart the session when the app comes back.
+      });
+
+      // pageshow fires after lock/unlock and after the app is foregrounded
       window.addEventListener("pageshow", () => {
-        if (_iosCtx && _iosCtx.state === "suspended")
-          _iosCtx.resume().catch(() => {});
-        if (S.playing && _audio && _audio.paused)
+        resumeSilentAudio();
+        if (S.playing && __ytPlayer)
           setTimeout(() => {
-            _audio.play().catch(() => {});
+            try {
+              if (__ytPlayer.getPlayerState() !== YT.PlayerState.PLAYING) {
+                __ytPlayer.playVideo();
+              }
+            } catch (e) {}
           }, 600);
       });
 
-      // ── Service Worker ──
-      // Media Session for iOS Lock Screen
+      // ── getAudio() ──
+      // Duck-typed audio-like object backed by the YouTube IFrame player.
+      // Used by MediaSession action handlers so the lock-screen controls work.
+      // Previously this function was called but never defined — that caused
+      // a silent ReferenceError that broke every lock-screen button.
+      function getAudio() {
+        return {
+          play: () => {
+            try { if (__ytPlayer) __ytPlayer.playVideo(); } catch (e) {}
+            return Promise.resolve();
+          },
+          pause: () => {
+            try { if (__ytPlayer) __ytPlayer.pauseVideo(); } catch (e) {}
+          },
+          get paused() {
+            if (!__ytPlayer || !S.playing) return true;
+            try { return __ytPlayer.getPlayerState() !== YT.PlayerState.PLAYING; } catch (e) { return true; }
+          },
+          get duration() {
+            try { return (__ytPlayer && __ytPlayer.getDuration()) || 0; } catch (e) { return 0; }
+          },
+          get currentTime() {
+            try { return (__ytPlayer && __ytPlayer.getCurrentTime()) || 0; } catch (e) { return 0; }
+          },
+        };
+      }
+
+      // ── Service Worker + Media Session for iOS Lock Screen ──
       function updMediaSession() {
         if (!("mediaSession" in navigator) || !S.track) return;
         navigator.mediaSession.metadata = new MediaMetadata({
@@ -2933,9 +3033,8 @@
         });
         navigator.mediaSession.playbackState = S.playing ? "playing" : "paused";
         navigator.mediaSession.setActionHandler("play", () => {
-          getAudio()
-            .play()
-            .catch(() => {});
+          resumeSilentAudio(); // re-arm silent audio (iOS may have suspended it)
+          getAudio().play();
         });
         navigator.mediaSession.setActionHandler("pause", () => {
           getAudio().pause();
@@ -2943,11 +3042,14 @@
         navigator.mediaSession.setActionHandler("previoustrack", prevT);
         navigator.mediaSession.setActionHandler("nexttrack", nextT);
         try {
-          if (_audio && _audio.duration && !isNaN(_audio.duration))
+          // Read position directly from the YouTube player
+          const dur = __ytPlayer ? __ytPlayer.getDuration() : 0;
+          const pos = __ytPlayer ? __ytPlayer.getCurrentTime() : 0;
+          if (dur && !isNaN(dur) && dur > 0)
             navigator.mediaSession.setPositionState({
-              duration: _audio.duration,
+              duration: dur,
               playbackRate: 1,
-              position: _audio.currentTime || 0,
+              position: pos || 0,
             });
         } catch (e) {}
       }
@@ -2967,8 +3069,10 @@
         if (S.track)
           localStorage.setItem("sonora_last", JSON.stringify(S.track));
       });
-      document.addEventListener("click", startSilentAudio, { once: true, passive: true });
-      document.addEventListener("touchstart", startSilentAudio, { once: true, passive: true });
+      // startSilentAudio is idempotent — safe to call on every interaction.
+      // (previously registered with once:true; removed so it re-arms on every tap)
+      document.addEventListener("click", startSilentAudio, { passive: true });
+      document.addEventListener("touchstart", startSilentAudio, { passive: true });
       document.addEventListener("DOMContentLoaded", checkReturning);
     </script>
   </body>
