@@ -2176,6 +2176,9 @@
           toast("Player not ready, wait a sec...");
           return;
         }
+        // Arm audio session on the user gesture that triggers play.
+        // startSilentAudio is idempotent — safe to call every time.
+        startSilentAudio();
         ensureAudioContext();
         __ytPlayer.loadVideoById(videoId);
       }
@@ -2887,7 +2890,7 @@
 
       // Minimal silent WAV (1 sample, 44100 Hz, mono, 16-bit PCM) as data URI
       const SILENT_WAV =
-        "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+        "data:audio/wav;base64,UklGRmQfAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YUAfAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICagICAgICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICagICAgICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICagICAgA==";
 
       let _silentEl = null;   // Layer 1 – HTMLAudioElement
       let _iosCtx   = null;   // Layer 2 – WebAudioContext
@@ -2920,7 +2923,7 @@
           try {
             _silentEl = new Audio(SILENT_WAV);
             _silentEl.loop    = true;
-            _silentEl.volume  = 0.001; // near-zero but non-zero so iOS counts it
+            _silentEl.volume  = 0.01;  // low but audible enough for iOS to hold audio session
             _silentEl.setAttribute("playsinline", "");
             document.body.appendChild(_silentEl);
           } catch (e) { _silentEl = null; }
