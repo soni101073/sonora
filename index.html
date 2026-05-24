@@ -2078,12 +2078,9 @@
         "https://inv.nadeko.net",
         "https://invidious.nerdvpn.de",
         "https://inv.thepixora.com",
-        "https://invidious.slipfox.xyz",
-        "https://yewtu.be",
-        "https://inv.tux.pizza",
-        "https://invidious.lunar.icu",
-        "https://iv.melmac.space",
-        "https://invidious.fdn.fr",
+        "https://yt.chocolatemoo53.com",
+        "https://invidious.tiekoetter.com",
+        "https://invidious.f5.si",
       ];
       const PROXY = "https://corsproxy.io/?";
       let invI = 0;
@@ -2194,8 +2191,27 @@
           if (!_usingRealAudio) return;
           if (_usingRealAudio) { S.playing = false; updPlayUI(); }
         });
+        _realAudio._retryCount = 0;
         _realAudio.addEventListener('error', () => {
           if (!_usingRealAudio) return;
+          // Retry once (stream may have hiccupped on lock/unlock)
+          if (_realAudio._retryCount < 1 && _realAudio.src && !_realAudio.src.startsWith('data:')) {
+            _realAudio._retryCount++;
+            const src = _realAudio.src;
+            _realAudio.src = '';
+            setTimeout(() => {
+              _realAudio.src = src;
+              _realAudio.play().catch(() => {
+                // Retry failed — fall back to YT
+                _usingRealAudio = false;
+                if (__ytPlayer && S.track) {
+                  __ytPlayer.setVolume(100);
+                  __ytPlayer.loadVideoById(S.track.videoId);
+                }
+              });
+            }, 500);
+            return;
+          }
           // Fallback to YouTube IFrame if Invidious stream fails
           _usingRealAudio = false;
           if (__ytPlayer && S.track) {
@@ -2268,12 +2284,14 @@
         if (!url || !S.track || S.track.videoId !== videoId) {
           // Invidious unavailable — use YT IFrame with audio
           __ytPlayer.setVolume(100);
+          if (!url) console.log('[Sonora] All Invidious instances failed — falling back to YT IFrame (no lock-screen support)');
           return;
         }
 
         try {
           audio.src    = url;
           audio.volume = 1;
+          audio._retryCount = 0; // reset retry counter for new track
           await audio.play();
           _usingRealAudio = true;
           // Pause YT IFrame (we're getting audio from _realAudio now)
@@ -2285,11 +2303,13 @@
           loadBar(false);
           startTick();
           updMediaSession();
+          console.log('[Sonora] Lock-screen audio active via Invidious');
         } catch (e) {
           // play() rejected — fall back to YT IFrame
           _usingRealAudio = false;
           audio.pause();
           __ytPlayer.setVolume(100);
+          console.log('[Sonora] Invidious play failed, using YT IFrame (no lock-screen support)');
         }
       }
 
@@ -3102,14 +3122,19 @@
       // state machine says we were playing, kick the YouTube player.
       document.addEventListener("visibilitychange", () => {
         resumeSilentAudio(); // re-arm both audio session layers
-        if (!document.hidden && S.playing && __ytPlayer) {
-          setTimeout(() => {
-            try {
-              if (__ytPlayer.getPlayerState() !== YT.PlayerState.PLAYING) {
-                __ytPlayer.playVideo();
-              }
-            } catch (e) {}
-          }, 400);
+        if (!document.hidden && S.playing) {
+          if (_usingRealAudio && _realAudio) {
+            // Real audio is the active player — just make sure it's playing
+            if (_realAudio.paused) _realAudio.play().catch(() => {});
+          } else if (__ytPlayer) {
+            setTimeout(() => {
+              try {
+                if (__ytPlayer.getPlayerState() !== YT.PlayerState.PLAYING) {
+                  __ytPlayer.playVideo();
+                }
+              } catch (e) {}
+            }, 400);
+          }
         }
       });
 
@@ -3122,14 +3147,19 @@
       // pageshow fires after lock/unlock and after the app is foregrounded
       window.addEventListener("pageshow", () => {
         resumeSilentAudio();
-        if (S.playing && __ytPlayer)
-          setTimeout(() => {
-            try {
-              if (__ytPlayer.getPlayerState() !== YT.PlayerState.PLAYING) {
-                __ytPlayer.playVideo();
-              }
-            } catch (e) {}
-          }, 600);
+        if (S.playing) {
+          if (_usingRealAudio && _realAudio) {
+            if (_realAudio.paused) _realAudio.play().catch(() => {});
+          } else if (__ytPlayer) {
+            setTimeout(() => {
+              try {
+                if (__ytPlayer.getPlayerState() !== YT.PlayerState.PLAYING) {
+                  __ytPlayer.playVideo();
+                }
+              } catch (e) {}
+            }, 600);
+          }
+        }
       });
 
       // ── getAudio() ──
@@ -3181,38 +3211,10 @@
         navigator.mediaSession.setActionHandler("previoustrack", prevT);
         navigator.mediaSession.setActionHandler("nexttrack", nextT);
         try {
-          // Read position directly from the YouTube player
-          const dur = __ytPlayer ? __ytPlayer.getDuration() : 0;
-          const pos = __ytPlayer ? __ytPlayer.getCurrentTime() : 0;
-          if (dur && !isNaN(dur) && dur > 0)
-            navigator.mediaSession.setPositionState({
-              duration: dur,
-              playbackRate: 1,
-              position: pos || 0,
-            });
-        } catch (e) {}
-      }
-
-      if ("serviceWorker" in navigator) {
-        const sw = `const C='sn6';self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll([location.pathname])));self.skipWaiting();});self.addEventListener('activate',()=>self.clients.claim());self.addEventListener('fetch',e=>{if(e.request.url.includes('invidious')||e.request.url.includes('yewtu')||e.request.url.includes('corsproxy'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));})`;
-        navigator.serviceWorker
-          .register(
-            URL.createObjectURL(
-              new Blob([sw], { type: "application/javascript" }),
-            ),
-          )
-          .catch(() => {});
-      }
-
-      window.addEventListener("beforeunload", () => {
-        if (S.track)
-          localStorage.setItem("sonora_last", JSON.stringify(S.track));
-      });
-      // startSilentAudio is idempotent — safe to call on every interaction.
-      // (previously registered with once:true; removed so it re-arms on every tap)
-      document.addEventListener("click", startSilentAudio, { once: true, passive: true });
-      document.addEventListener("touchstart", startSilentAudio, { once: true, passive: true });
-      document.addEventListener("DOMContentLoaded", checkReturning);
-    </script>
-  </body>
-</html>
+          // Read position from the active player
+          let dur, pos;
+          if (_usingRealAudio && _realAudio) {
+            dur = _realAudio.duration;
+            pos = _realAudio.currentTime;
+          } else {
+            dur = __ytPlayer ? __ytPlayer.getDuration() :
