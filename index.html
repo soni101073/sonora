@@ -3217,4 +3217,38 @@
             dur = _realAudio.duration;
             pos = _realAudio.currentTime;
           } else {
-            dur = __ytPlayer ? __ytPlayer.getDuration() :
+            dur = __ytPlayer ? __ytPlayer.getDuration() : 0;
+            pos = __ytPlayer ? __ytPlayer.getCurrentTime() : 0;
+          }
+          if (dur && !isNaN(dur) && dur > 0)
+            navigator.mediaSession.setPositionState({
+              duration: dur,
+              playbackRate: 1,
+              position: Math.min(pos || 0, dur),
+            });
+        } catch (e) {}
+      }
+
+      if ("serviceWorker" in navigator) {
+        const sw = `const C='sn7';self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll([location.pathname])));self.skipWaiting();});self.addEventListener('activate',()=>self.clients.claim());self.addEventListener('fetch',e=>{if(e.request.url.includes('invidious')||e.request.url.includes('yewtu')||e.request.url.includes('corsproxy'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));})`;
+        navigator.serviceWorker
+          .register(
+            URL.createObjectURL(
+              new Blob([sw], { type: "application/javascript" }),
+            ),
+          )
+          .catch(() => {});
+      }
+
+      window.addEventListener("beforeunload", () => {
+        if (S.track)
+          localStorage.setItem("sonora_last", JSON.stringify(S.track));
+      });
+      // startSilentAudio is idempotent — safe to call on every interaction.
+      // (previously registered with once:true; removed so it re-arms on every tap)
+      document.addEventListener("click", startSilentAudio, { once: true, passive: true });
+      document.addEventListener("touchstart", startSilentAudio, { once: true, passive: true });
+      document.addEventListener("DOMContentLoaded", checkReturning);
+    </script>
+  </body>
+</html>
