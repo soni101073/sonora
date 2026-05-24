@@ -2078,9 +2078,12 @@
         "https://inv.nadeko.net",
         "https://invidious.nerdvpn.de",
         "https://inv.thepixora.com",
-        "https://yt.chocolatemoo53.com",
-        "https://invidious.tiekoetter.com",
-        "https://invidious.f5.si",
+        "https://invidious.slipfox.xyz",
+        "https://yewtu.be",
+        "https://inv.tux.pizza",
+        "https://invidious.lunar.icu",
+        "https://iv.melmac.space",
+        "https://invidious.fdn.fr",
       ];
       const PROXY = "https://corsproxy.io/?";
       let invI = 0;
@@ -2136,8 +2139,6 @@
       }
 
       function onYTStateChange(e) {
-        // When real audio is active, ignore YT state changes
-        if (_usingRealAudio) return;
         if (e.data === YT.PlayerState.PLAYING) {
           S.playing = true;
           updPlayUI();
@@ -2170,147 +2171,13 @@
         setTimeout(() => nextT(), 1500);
       }
 
-      // ── Real <audio> helper: returns/creates the main-page audio element ──
-      function _getRealAudio() {
-        if (_realAudio) return _realAudio;
-        _realAudio = document.createElement('audio');
-        _realAudio.setAttribute('playsinline', '');
-        _realAudio.setAttribute('preload', 'none');
-        _realAudio.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:0;height:0;';
-        document.body.appendChild(_realAudio);
-        _realAudio.addEventListener('ended', () => {
-          if (!_usingRealAudio) return;
-          if (S.rep) { _realAudio.currentTime = 0; _realAudio.play().catch(() => {}); }
-          else nextT();
-        });
-        _realAudio.addEventListener('playing', () => {
-          if (!_usingRealAudio) return;
-          S.playing = true; updPlayUI();
-        });
-        _realAudio.addEventListener('pause', () => {
-          if (!_usingRealAudio) return;
-          if (_usingRealAudio) { S.playing = false; updPlayUI(); }
-        });
-        _realAudio._retryCount = 0;
-        _realAudio.addEventListener('error', () => {
-          if (!_usingRealAudio) return;
-          // Retry once (stream may have hiccupped on lock/unlock)
-          if (_realAudio._retryCount < 1 && _realAudio.src && !_realAudio.src.startsWith('data:')) {
-            _realAudio._retryCount++;
-            const src = _realAudio.src;
-            _realAudio.src = '';
-            setTimeout(() => {
-              _realAudio.src = src;
-              _realAudio.play().catch(() => {
-                // Retry failed — fall back to YT
-                _usingRealAudio = false;
-                if (__ytPlayer && S.track) {
-                  __ytPlayer.setVolume(100);
-                  __ytPlayer.loadVideoById(S.track.videoId);
-                }
-              });
-            }, 500);
-            return;
-          }
-          // Fallback to YouTube IFrame if Invidious stream fails
-          _usingRealAudio = false;
-          if (__ytPlayer && S.track) {
-            __ytPlayer.setVolume(100);
-            __ytPlayer.loadVideoById(S.track.videoId);
-          }
-        });
-        return _realAudio;
-      }
-
-      // ── Fetch audio-only stream URL from Invidious (lock-screen-compatible) ──
-      async function _fetchInvidiousAudioUrl(videoId) {
-        for (let i = 0; i < INV.length; i++) {
-          const host = INV[(invI + i) % INV.length];
-          try {
-            const ctrl = new AbortController();
-            const tid  = setTimeout(() => ctrl.abort(), 6000);
-            const r    = await fetch(
-              `${host}/api/v1/videos/${videoId}?fields=adaptiveFormats&local=true`,
-              { signal: ctrl.signal }
-            );
-            clearTimeout(tid);
-            if (!r.ok) continue;
-            const data = await r.json();
-            const fmts = (data.adaptiveFormats || [])
-              .filter(f => f.type && f.type.startsWith('audio/'));
-            if (!fmts.length) continue;
-            // Prefer audio/mp4 (AAC) — best iOS compatibility
-            const chosen = fmts.find(f => f.type.startsWith('audio/mp4')) || fmts[0];
-            if (chosen && chosen.url) {
-              invI = (invI + i) % INV.length;
-              return chosen.url;
-            }
-          } catch (e) { /* instance unavailable, try next */ }
-        }
-        return null;
-      }
-
-      // ── Main play function — dual-player strategy ──
-      // On iOS, YouTube IFrame <video> is suspended when the screen locks.
-      // A main-page <audio> element IS kept alive by iOS. So we:
-      //   1. Immediately load YT IFrame (muted) as a visual fallback
-      //   2. Fetch an audio-only URL from Invidious
-      //   3. Play it through a main-page <audio> (lock-screen-safe)
-      //   4. If Invidious fails, unmute YT IFrame (works when screen is on)
-      async function playOnNative(videoId) {
+      function playOnNative(videoId) {
         if (!S.ytReady || !__ytPlayer) {
           toast("Player not ready, wait a sec...");
           return;
         }
-        startSilentAudio();
         ensureAudioContext();
-        _usingRealAudio = false;
-        const audio = _getRealAudio();
-        audio.pause();
-
-        // Pre-unlock the <audio> element on this user gesture
-        audio.src = SILENT_WAV;
-        audio.volume = 0;
-        audio.play().catch(() => {});
-
-        // Load YT IFrame muted as immediate fallback
-        __ytPlayer.setVolume(0);
         __ytPlayer.loadVideoById(videoId);
-
-        // Fetch real audio URL from Invidious
-        const url = await _fetchInvidiousAudioUrl(videoId);
-
-        // Guard: track may have changed while we awaited
-        if (!url || !S.track || S.track.videoId !== videoId) {
-          // Invidious unavailable — use YT IFrame with audio
-          __ytPlayer.setVolume(100);
-          if (!url) console.log('[Sonora] All Invidious instances failed — falling back to YT IFrame (no lock-screen support)');
-          return;
-        }
-
-        try {
-          audio.src    = url;
-          audio.volume = 1;
-          audio._retryCount = 0; // reset retry counter for new track
-          await audio.play();
-          _usingRealAudio = true;
-          // Pause YT IFrame (we're getting audio from _realAudio now)
-          stopTick();
-          __ytPlayer.pauseVideo();
-          __ytPlayer.setVolume(100);
-          S.playing = true;
-          updPlayUI();
-          loadBar(false);
-          startTick();
-          updMediaSession();
-          console.log('[Sonora] Lock-screen audio active via Invidious');
-        } catch (e) {
-          // play() rejected — fall back to YT IFrame
-          _usingRealAudio = false;
-          audio.pause();
-          __ytPlayer.setVolume(100);
-          console.log('[Sonora] Invidious play failed, using YT IFrame (no lock-screen support)');
-        }
       }
 
       function handleCredentialResponse(response) {
@@ -2527,14 +2394,9 @@
       }
 
       function togPlay() {
-        if (!S.track) return;
-        if (_usingRealAudio && _realAudio) {
-          if (S.playing) _realAudio.pause();
-          else _realAudio.play().catch(() => {});
-        } else if (__ytPlayer) {
-          if (S.playing) __ytPlayer.pauseVideo();
-          else __ytPlayer.playVideo();
-        }
+        if (!S.track || !__ytPlayer) return;
+        if (S.playing) __ytPlayer.pauseVideo();
+        else __ytPlayer.playVideo();
       }
       function nextT() {
         if (!S.queue.length) return;
@@ -2544,12 +2406,8 @@
         playTrack(S.queue[S.qi], S.queue, S.qi);
       }
       function prevT() {
-        const cur = (_usingRealAudio && _realAudio)
-          ? _realAudio.currentTime
-          : (__ytPlayer ? __ytPlayer.getCurrentTime() : 0);
-        if (cur > 3) {
-          if (_usingRealAudio && _realAudio) _realAudio.currentTime = 0;
-          else if (__ytPlayer) __ytPlayer.seekTo(0);
+        if (__ytPlayer && __ytPlayer.getCurrentTime() > 3) {
+          __ytPlayer.seekTo(0);
           return;
         }
         if (!S.queue.length) return;
@@ -2557,14 +2415,9 @@
         playTrack(S.queue[S.qi], S.queue, S.qi);
       }
       function seekTo(v) {
-        if (_usingRealAudio && _realAudio && _realAudio.duration > 0) {
-          _realAudio.currentTime = (v / 100) * _realAudio.duration;
-        } else if (__ytPlayer && __ytPlayer.getDuration() > 0) {
-          __ytPlayer.seekTo((v / 100) * __ytPlayer.getDuration(), true);
-        }
+        if (__ytPlayer && __ytPlayer.getDuration() > 0) __ytPlayer.seekTo((v / 100) * __ytPlayer.getDuration(), true);
       }
       function setVol(v) {
-        if (_realAudio && _usingRealAudio) _realAudio.volume = v / 100;
         if (__ytPlayer) __ytPlayer.setVolume(v);
       }
       function toggleSh() {
@@ -2598,15 +2451,9 @@
       function startTick() {
         stopTick();
         S.tick = setInterval(() => {
-          if (!S.playing) return;
-          let dur, cur;
-          if (_usingRealAudio && _realAudio) {
-            dur = _realAudio.duration;
-            cur = _realAudio.currentTime;
-          } else if (__ytPlayer) {
-            dur = __ytPlayer.getDuration();
-            cur = __ytPlayer.getCurrentTime();
-          } else { return; }
+          if (!S.playing || !__ytPlayer) return;
+          const dur = __ytPlayer.getDuration();
+          const cur = __ytPlayer.getCurrentTime();
           if (!dur || isNaN(dur) || dur <= 0) return;
           const p = (cur / dur) * 100;
           const sk = document.getElementById("fp-sk");
@@ -3019,177 +2866,61 @@
         tT = setTimeout(() => el.classList.remove("on"), 2500);
       }
 
-      // ── iOS Background Playback — Dual-layer Audio Session Keep-alive ──
-      //
-      // STRATEGY: iOS kills YouTube iframe audio when the screen locks or the
-      // user switches apps, UNLESS the page holds an active audio session.
-      // We use TWO complementary layers so one always survives:
-      //
-      //  Layer 1 — Hidden <audio> element looping a 1-sample silent WAV.
-      //    iOS treats a looping HTMLAudioElement as a music player and keeps
-      //    the audio session alive across lock/unlock and app-switch cycles.
-      //    This is the same mechanism Spotify's PWA uses.
-      //
-      //  Layer 2 — Web Audio API silent buffer loop (keepalive heartbeat).
-      //    Schedules a fresh silent BufferSource every 25 s via setInterval
-      //    instead of relying on src.onended (which iOS never fires when the
-      //    context is suspended). If the context goes suspended we resume() it.
-      //
-      // Together these keep the iOS audio session alive without requiring a
-      // native app or a Service Worker with background-sync.
-
-      // Minimal silent WAV (1 sample, 44100 Hz, mono, 16-bit PCM) as data URI
-      const SILENT_WAV =
-        "data:audio/wav;base64,UklGRmQfAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YUAfAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==";
-
-      let _silentEl = null;   // Layer 1 – HTMLAudioElement
-      let _iosCtx   = null;   // Layer 2 – WebAudioContext
-      let _iosTimer = null;   // Layer 2 – keepalive interval
-      let _realAudio = null;  // Layer 3 – main-page <audio> for lock-screen
-      let _usingRealAudio = false; // true when _realAudio is active player
-
-      function _scheduleWebAudioPulse() {
-        // Fire a new zero-amplitude buffer every 25 s so the context stays warm.
-        // Using setInterval instead of onended prevents the loop from dying when
-        // iOS suspends the context (onended is never dispatched in that case).
-        if (_iosTimer) return;
-        _iosTimer = setInterval(() => {
-          if (!_iosCtx) return;
-          if (_iosCtx.state === "suspended") {
-            _iosCtx.resume().catch(() => {});
-            return;
-          }
-          try {
-            const buf = _iosCtx.createBuffer(1, 1, _iosCtx.sampleRate);
-            const src = _iosCtx.createBufferSource();
-            src.buffer = buf;
-            src.connect(_iosCtx.destination);
-            src.start(0);
-          } catch (e) {}
-        }, 25000);
-      }
-
+      // ── iOS Background Playback — Silent AudioContext Heartbeat ──
+      // iOS suspends audio from iframes when the screen locks. A continuously
+      // scheduled Web Audio buffer tricks iOS into keeping the audio session alive,
+      // allowing the YouTube iframe to continue playing through the lock screen.
+      let _iosCtx = null;
       function startSilentAudio() {
-        // ── Layer 1: looping HTMLAudioElement ──
-        if (!_silentEl) {
-          try {
-            _silentEl = new Audio(SILENT_WAV);
-            _silentEl.loop    = true;
-            _silentEl.volume  = 0.01;  // low but audible enough for iOS to hold audio session
-            _silentEl.setAttribute("playsinline", "");
-            document.body.appendChild(_silentEl);
-          } catch (e) { _silentEl = null; }
+        if (_iosCtx) {
+          if (_iosCtx.state === "suspended") _iosCtx.resume().catch(() => {});
+          return;
         }
-        if (_silentEl && _silentEl.paused) {
-          _silentEl.play().catch(() => {});
-        }
-
-        // ── Layer 2: Web Audio API ──
         try {
           const AC = window.AudioContext || window.webkitAudioContext;
           if (!AC) return;
-          if (!_iosCtx) {
-            _iosCtx = new AC();
-            // Fire one immediate pulse to unlock the context on first user gesture
-            const buf = _iosCtx.createBuffer(1, 1, _iosCtx.sampleRate);
+          _iosCtx = new AC();
+          const schedule = () => {
+            if (!_iosCtx) return;
+            const buf = _iosCtx.createBuffer(
+              1,
+              Math.ceil(_iosCtx.sampleRate * 0.1),
+              _iosCtx.sampleRate,
+            );
             const src = _iosCtx.createBufferSource();
             src.buffer = buf;
             src.connect(_iosCtx.destination);
             src.start(0);
-          }
+            src.onended = () => setTimeout(schedule, 200);
+          };
+          schedule();
           if (_iosCtx.state === "suspended") _iosCtx.resume().catch(() => {});
-          _scheduleWebAudioPulse();
         } catch (e) {}
       }
 
-      function resumeSilentAudio() {
-        // Called on every visibility/pageshow event — cheaply re-arms all layers
-        if (_silentEl && _silentEl.paused) {
-          _silentEl.play().catch(() => {});
-        }
-        if (_iosCtx) {
-          if (_iosCtx.state === "suspended") _iosCtx.resume().catch(() => {});
-        }
-        // Resume real audio if it was the active player and should be playing
-        if (_usingRealAudio && _realAudio && S.playing && _realAudio.paused) {
-          _realAudio.play().catch(() => {});
-        }
-      }
-
-      // ── Resume from background / lock screen ──
-      // iOS fires visibilitychange when the screen locks/unlocks AND when the
-      // user switches apps. We re-arm both silent-audio layers and, if the
-      // state machine says we were playing, kick the YouTube player.
+      // Resume audio session + YouTube player when returning from background/lock screen
       document.addEventListener("visibilitychange", () => {
-        resumeSilentAudio(); // re-arm both audio session layers
-        if (!document.hidden && S.playing) {
-          if (_usingRealAudio && _realAudio) {
-            // Real audio is the active player — just make sure it's playing
-            if (_realAudio.paused) _realAudio.play().catch(() => {});
-          } else if (__ytPlayer) {
-            setTimeout(() => {
-              try {
-                if (__ytPlayer.getPlayerState() !== YT.PlayerState.PLAYING) {
-                  __ytPlayer.playVideo();
-                }
-              } catch (e) {}
-            }, 400);
-          }
+        if (_iosCtx && _iosCtx.state === "suspended")
+          _iosCtx.resume().catch(() => {});
+        if (!document.hidden && S.playing && _audio && _audio.paused) {
+          setTimeout(() => {
+            _audio.play().catch(() => {});
+          }, 400);
         }
       });
 
-      // pagehide — iOS PWA fires this (not unload) when app is backgrounded
-      window.addEventListener("pagehide", () => {
-        // Nothing to do here; resumeSilentAudio() in pageshow/visibilitychange
-        // will restart the session when the app comes back.
-      });
-
-      // pageshow fires after lock/unlock and after the app is foregrounded
+      // pageshow handles iOS PWA suspend/resume cycle
       window.addEventListener("pageshow", () => {
-        resumeSilentAudio();
-        if (S.playing) {
-          if (_usingRealAudio && _realAudio) {
-            if (_realAudio.paused) _realAudio.play().catch(() => {});
-          } else if (__ytPlayer) {
-            setTimeout(() => {
-              try {
-                if (__ytPlayer.getPlayerState() !== YT.PlayerState.PLAYING) {
-                  __ytPlayer.playVideo();
-                }
-              } catch (e) {}
-            }, 600);
-          }
-        }
+        if (_iosCtx && _iosCtx.state === "suspended")
+          _iosCtx.resume().catch(() => {});
+        if (S.playing && _audio && _audio.paused)
+          setTimeout(() => {
+            _audio.play().catch(() => {});
+          }, 600);
       });
 
-      // ── getAudio() ──
-      // Returns the active audio source: the real HTMLAudioElement when Invidious
-      // streaming is active (lock-screen-compatible), or a duck-typed wrapper around
-      // the YouTube IFrame player when used as fallback.
-      function getAudio() {
-        if (_usingRealAudio && _realAudio) return _realAudio;
-        return {
-          play: () => {
-            try { if (__ytPlayer) __ytPlayer.playVideo(); } catch (e) {}
-            return Promise.resolve();
-          },
-          pause: () => {
-            try { if (__ytPlayer) __ytPlayer.pauseVideo(); } catch (e) {}
-          },
-          get paused() {
-            if (!__ytPlayer || !S.playing) return true;
-            try { return __ytPlayer.getPlayerState() !== YT.PlayerState.PLAYING; } catch (e) { return true; }
-          },
-          get duration() {
-            try { return (__ytPlayer && __ytPlayer.getDuration()) || 0; } catch (e) { return 0; }
-          },
-          get currentTime() {
-            try { return (__ytPlayer && __ytPlayer.getCurrentTime()) || 0; } catch (e) { return 0; }
-          },
-        };
-      }
-
-      // ── Service Worker + Media Session for iOS Lock Screen ──
+      // ── Service Worker ──
+      // Media Session for iOS Lock Screen
       function updMediaSession() {
         if (!("mediaSession" in navigator) || !S.track) return;
         navigator.mediaSession.metadata = new MediaMetadata({
@@ -3202,8 +2933,9 @@
         });
         navigator.mediaSession.playbackState = S.playing ? "playing" : "paused";
         navigator.mediaSession.setActionHandler("play", () => {
-          resumeSilentAudio(); // re-arm silent audio (iOS may have suspended it)
-          getAudio().play();
+          getAudio()
+            .play()
+            .catch(() => {});
         });
         navigator.mediaSession.setActionHandler("pause", () => {
           getAudio().pause();
@@ -3211,26 +2943,17 @@
         navigator.mediaSession.setActionHandler("previoustrack", prevT);
         navigator.mediaSession.setActionHandler("nexttrack", nextT);
         try {
-          // Read position from the active player
-          let dur, pos;
-          if (_usingRealAudio && _realAudio) {
-            dur = _realAudio.duration;
-            pos = _realAudio.currentTime;
-          } else {
-            dur = __ytPlayer ? __ytPlayer.getDuration() : 0;
-            pos = __ytPlayer ? __ytPlayer.getCurrentTime() : 0;
-          }
-          if (dur && !isNaN(dur) && dur > 0)
+          if (_audio && _audio.duration && !isNaN(_audio.duration))
             navigator.mediaSession.setPositionState({
-              duration: dur,
+              duration: _audio.duration,
               playbackRate: 1,
-              position: Math.min(pos || 0, dur),
+              position: _audio.currentTime || 0,
             });
         } catch (e) {}
       }
 
       if ("serviceWorker" in navigator) {
-        const sw = `const C='sn7';self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll([location.pathname])));self.skipWaiting();});self.addEventListener('activate',()=>self.clients.claim());self.addEventListener('fetch',e=>{if(e.request.url.includes('invidious')||e.request.url.includes('yewtu')||e.request.url.includes('corsproxy'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));})`;
+        const sw = `const C='sn6';self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll([location.pathname])));self.skipWaiting();});self.addEventListener('activate',()=>self.clients.claim());self.addEventListener('fetch',e=>{if(e.request.url.includes('invidious')||e.request.url.includes('yewtu')||e.request.url.includes('corsproxy'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));})`;
         navigator.serviceWorker
           .register(
             URL.createObjectURL(
@@ -3244,8 +2967,6 @@
         if (S.track)
           localStorage.setItem("sonora_last", JSON.stringify(S.track));
       });
-      // startSilentAudio is idempotent — safe to call on every interaction.
-      // (previously registered with once:true; removed so it re-arms on every tap)
       document.addEventListener("click", startSilentAudio, { once: true, passive: true });
       document.addEventListener("touchstart", startSilentAudio, { once: true, passive: true });
       document.addEventListener("DOMContentLoaded", checkReturning);
