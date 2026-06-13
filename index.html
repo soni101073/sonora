@@ -683,7 +683,7 @@
   <body>
     <!-- Loading bar (top, appears while fetching audio) -->
     <div id="load-bar"><div id="load-fill"></div></div>
-    <audio id="player-audio" playsinline webkit-playsinline preload="metadata" crossorigin="anonymous"></audio>
+    <audio id="player-audio" playsinline webkit-playsinline preload="none"></audio>
 
     <!-- WELCOME -->
     <div id="welcome">
@@ -1502,51 +1502,104 @@
         return _audio;
       }
 
-      // Fetch audio-only stream URL from Invidious /api/v1/videos/{id}
+      // ── Audio URL Fetcher ──
+      // Returns a ranked list of candidate URLs for the track.
+      // Priority: Invidious-proxied AAC → Invidious-proxied any audio
+      //         → direct AAC (works without crossorigin on iOS)
+      //         → direct any audio → muxed formatStream
+      //         → corsproxy-wrapped fallback for anything above
       async function fetchInvAudio(videoId) {
+        const seen = new Set();
+        const add  = (arr, url) => { if (url && !seen.has(url)) { seen.add(url); arr.push(url); } };
+
         for (let pass = 0; pass < 2; pass++) {
           for (let a = 0; a < INV.length; a++) {
             const base = INV[(invI + a) % INV.length];
-            let url = `${base}/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams`;
-            if (pass === 1) url = PROXY + encodeURIComponent(url);
+            let apiUrl = `${base}/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams,videoId`;
+            if (pass === 1) apiUrl = PROXY + encodeURIComponent(apiUrl);
             try {
               const ctrl = new AbortController();
-              const tid = setTimeout(() => ctrl.abort(), 9000);
-              const r = await fetch(url, { signal: ctrl.signal });
+              const tid = setTimeout(() => ctrl.abort(), 10000);
+              const r = await fetch(apiUrl, { signal: ctrl.signal });
               clearTimeout(tid);
               if (!r.ok) throw new Error(r.status);
               const d = await r.json();
-              const formats = (d.adaptiveFormats || [])
+
+              const af = (d.adaptiveFormats || [])
                 .filter(f => f.type?.startsWith('audio/') && f.url)
                 .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-              // iOS prefers AAC/mp4 — pick it first, fallback to best available
-              const best =
-                formats.find(f => f.type.includes('mp4') || f.encoding === 'aac') ||
-                formats[0] ||
-                (d.formatStreams || []).find(f => f.url);
-              if (best?.url) {
+
+              const isProxied = u => u && !u.includes('googlevideo.com');
+              const isAAC     = f => f.type?.includes('mp4') || f.encoding === 'aac' || f.container === 'mp4';
+
+              const proxiedAAC = af.filter(f => isProxied(f.url) && isAAC(f));
+              const proxiedAny = af.filter(f => isProxied(f.url));
+              const directAAC  = af.filter(f => !isProxied(f.url) && isAAC(f));
+              const directAny  = af.filter(f => !isProxied(f.url));
+              const fmtStream  = (d.formatStreams || []).filter(f => f.url);
+
+              const candidates = [];
+              // Tier 1 — Invidious-proxied streams (have CORS headers, always safe)
+              proxiedAAC.slice(0,2).forEach(f => add(candidates, f.url));
+              proxiedAny.slice(0,1).forEach(f => add(candidates, f.url));
+              // Tier 2 — direct YouTube CDN (no crossorigin attr = no CORS check, works on iOS)
+              directAAC.slice(0,2).forEach(f  => add(candidates, f.url));
+              directAny.slice(0,1).forEach(f  => add(candidates, f.url));
+              // Tier 3 — muxed streams (audio+video, iOS ignores video)
+              fmtStream.slice(0,1).forEach(f  => add(candidates, f.url));
+              // Tier 4 — wrap everything through corsproxy as last resort
+              [...proxiedAAC, ...directAAC].slice(0,2).forEach(f =>
+                add(candidates, PROXY + encodeURIComponent(f.url))
+              );
+
+              if (candidates.length) {
                 invI = (invI + a) % INV.length;
-                return best.url;
+                return candidates;
               }
             } catch(e) {}
           }
         }
-        return null;
+        return [];
+      }
+
+      // Try loading a URL into the audio element; resolves true on canplay, false on error.
+      function tryAudioUrl(au, url) {
+        return new Promise(resolve => {
+          const onOk  = () => { cleanup(); resolve(true);  };
+          const onErr = () => { cleanup(); resolve(false); };
+          const cleanup = () => {
+            au.removeEventListener('canplay', onOk);
+            au.removeEventListener('error',   onErr);
+          };
+          au.addEventListener('canplay', onOk,  { once: true });
+          au.addEventListener('error',   onErr, { once: true });
+          au.src = url;
+          au.load();
+        });
       }
 
       async function playOnNative(videoId) {
         loadBar(true);
-        const url = await fetchInvAudio(videoId);
-        if (!url) {
+        const urls = await fetchInvAudio(videoId);
+        if (!urls.length) {
           loadBar(false);
-          toast('Could not load stream — try another track');
+          toast('No stream found — try a different track');
           S.playing = false; updPlayUI();
           return;
         }
         const au = getAudio();
-        au.src = url;
-        au.load();
-        try { await au.play(); } catch(e) { /* autoplay blocked — user must tap */ }
+        let loaded = false;
+        for (const url of urls) {
+          const ok = await tryAudioUrl(au, url);
+          if (ok) { loaded = true; break; }
+        }
+        if (!loaded) {
+          loadBar(false);
+          toast('Stream unavailable — try a different track');
+          S.playing = false; updPlayUI();
+          return;
+        }
+        try { await au.play(); } catch(e) { /* NotAllowedError — user must tap play */ }
         updMediaSession();
       }
 
