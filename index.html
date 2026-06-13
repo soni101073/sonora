@@ -104,8 +104,8 @@
       }
       #welcome.out{opacity:0;transform:scale(.97);pointer-events:none}
       .wlc-logo{
-        width:108px;height:108px;border-radius:28px;
-        background:linear-gradient(145deg,#ff7040,#e02b00);
+        width:114px;height:114px;border-radius:30px;
+        background:linear-gradient(145deg,#ff7545,#d42800);
         display:flex;align-items:center;justify-content:center;
         box-shadow:0 0 0 1px rgba(255,255,255,.1),0 24px 64px rgba(245,83,29,.45),inset 0 1px 0 rgba(255,255,255,.22);
         animation:popIn .6s cubic-bezier(.34,1.56,.64,1) both;
@@ -676,6 +676,40 @@
       .fp-hb.sv {
         background: rgba(245,83,29,0.14) !important;
       }
+
+      /* ── BRAND REDESIGN ── */
+      .wlc-logo {
+        width: 114px !important; height: 114px !important;
+        border-radius: 30px !important;
+        background: linear-gradient(145deg,#ff7545,#d42800) !important;
+        box-shadow:
+          0 0 0 1px rgba(255,255,255,.12),
+          0 0 0 7px rgba(245,83,29,.1),
+          0 28px 72px rgba(245,83,29,.5),
+          inset 0 1px 0 rgba(255,255,255,.25) !important;
+      }
+      .wlc-word {
+        font-size:32px !important; font-weight:900 !important;
+        letter-spacing:10px !important; margin-top:26px !important;
+        text-indent:10px;
+      }
+      .sonora-icon {
+        width:38px !important; height:38px !important;
+        border-radius:11px !important;
+        background:linear-gradient(145deg,#ff7545,#d42800) !important;
+        box-shadow:0 5px 22px rgba(245,83,29,.45),inset 0 1px 0 rgba(255,255,255,.18) !important;
+      }
+      .logo-word { font-size:20px !important; font-weight:900 !important; letter-spacing:3.5px !important; text-indent:3.5px; }
+      .logo-word::after { background:linear-gradient(90deg,rgba(245,83,29,.6),transparent) !important; }
+      /* Version footer */
+      .ver-footer {
+        display:flex; align-items:center; justify-content:center;
+        gap:8px; padding:28px 0 18px;
+        font-size:11px; font-weight:700; letter-spacing:2px; text-transform:uppercase;
+        color:rgba(255,255,255,.2);
+      }
+      .ver-num { color:rgba(245,83,29,.45); font-size:10px; letter-spacing:1.5px; }
+      .ver-dot { width:3px; height:3px; border-radius:50%; background:rgba(255,255,255,.15); flex-shrink:0; }
     </style>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="https://www.youtube.com/iframe_api" async></script>
@@ -688,46 +722,14 @@
     <!-- WELCOME -->
     <div id="welcome">
       <div class="wlc-logo">
-        <svg
-          width="64"
-          height="64"
-          viewBox="0 0 64 64"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <rect
-            x="3"
-            y="34"
-            width="6"
-            height="16"
-            rx="3"
-            fill="rgba(255,255,255,.5)"
-          />
-          <rect
-            x="16"
-            y="24"
-            width="6"
-            height="26"
-            rx="3"
-            fill="rgba(255,255,255,.75)"
-          />
-          <rect x="29" y="14" width="6" height="36" rx="3" fill="white" />
-          <rect
-            x="42"
-            y="24"
-            width="6"
-            height="26"
-            rx="3"
-            fill="rgba(255,255,255,.75)"
-          />
-          <rect
-            x="55"
-            y="34"
-            width="6"
-            height="16"
-            rx="3"
-            fill="rgba(255,255,255,.5)"
-          />
+        <svg width="68" height="68" viewBox="0 0 68 68" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="34" cy="34" r="26" fill="rgba(0,0,0,0.15)"/>
+          <circle cx="34" cy="34" r="30" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+          <path d="M8 34 C12 34 14 16 20 16 C26 16 28 52 34 52 C40 52 42 16 48 16 C54 16 56 34 60 34"
+                stroke="white" stroke-width="3.5" fill="none"
+                stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+          <circle cx="8"  cy="34" r="2.5" fill="white" opacity="0.6"/>
+          <circle cx="60" cy="34" r="2.5" fill="white" opacity="0.6"/>
         </svg>
       </div>
       <div class="wlc-word">SONORA</div>
@@ -1082,6 +1084,13 @@
             </button>
           </div>
           <div style="height: 12px"></div>
+          <!-- Version footer -->
+          <div class="ver-footer">
+            <span class="ver-dot"></span>
+            <span>SONORA</span>
+            <span class="ver-num">v8.0</span>
+            <span class="ver-dot"></span>
+          </div>
         </div>
 
         <!-- SEARCH -->
@@ -1474,25 +1483,26 @@
       };
 
       // ── Native Audio Engine ──
-      // Playback uses a native <audio> element + Invidious audio streams.
-      // This is the only approach that survives the iOS lock screen.
-      //
-      // iOS AUTOPLAY RULES:
-      //   audio.play() must be called from a synchronous user-gesture stack.
-      //   After any `await`, iOS drops the gesture context and blocks play().
-      //   Fix: on the very first touch/click we play a silent data URI to
-      //   "unlock" the element — after that, play() works from async code too.
+      // Plays audio via a native <audio> element using Invidious audio streams.
+      // Design goals:
+      //   1. FAST  — fetch all Invidious instances in parallel (Promise.any),
+      //              play the first URL immediately (no pre-probing).
+      //   2. IOS   — unlock audio element on first user touch with a silent WAV
+      //              so async play() calls are never blocked by iOS autoplay policy.
+      //   3. RETRY — on stream error, automatically try the next candidate URL
+      //              from _pendingUrls without showing the user an error.
 
-      // Minimal silent WAV (44 bytes, 0 samples) — used to unlock iOS audio.
       const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
 
-      let _audio   = null;
-      let _trying  = false; // true while probing candidate URLs (suppresses permanent handlers)
-      let _unlocked = false; // true once iOS audio element has been unlocked
+      let _audio       = null;
+      let _trying      = false;   // true while unlockAudioEl plays the silent clip
+      let _unlocked    = false;   // true after first iOS unlock
+      let _pendingUrls = [];      // fallback URLs to try if a stream errors mid-play
 
       function getAudio() {
         if (_audio) return _audio;
         _audio = document.getElementById('player-audio');
+
         _audio.addEventListener('play', () => {
           if (_trying) return;
           S.playing = true; updPlayUI(); startTick(); loadBar(false); updMediaSession();
@@ -1508,16 +1518,23 @@
           else nextT();
         });
         _audio.addEventListener('error', () => {
-          if (_trying) return; // suppressed — tryAudioUrl handles it
+          if (_trying) return;
+          // Auto-retry with next candidate URL before giving up
+          if (_pendingUrls.length) {
+            const next = _pendingUrls.shift();
+            _audio.src  = next;
+            _audio.load();
+            _audio.play().catch(() => {});
+            return;
+          }
           S.playing = false; updPlayUI(); stopTick(); loadBar(false);
-          toast('Stream interrupted — skipping…');
-          setTimeout(() => nextT(), 1500);
+          toast('Stream unavailable — try another track');
         });
         return _audio;
       }
 
-      // Play a silent clip synchronously from a user-gesture handler to unlock
-      // the iOS audio element. After this, async play() calls are permitted.
+      // Unlock iOS <audio> element on first user gesture.
+      // After this, play() works even from async code.
       function unlockAudioEl() {
         if (_unlocked) return;
         _unlocked = true;
@@ -1526,84 +1543,63 @@
         au.muted = true;
         au.src = SILENT_WAV;
         const p = au.play();
-        if (p) p.then(() => { au.pause(); }).catch(() => {}).finally(() => {
+        const done = () => {
+          au.pause();
           au.muted = false;
           au.removeAttribute('src');
           au.load();
           _trying = false;
-        }); else { au.muted = false; _trying = false; }
+        };
+        if (p) p.then(done).catch(done); else done();
       }
 
-      // Probe one candidate URL — resolves true on canplay, false on error or 8 s timeout.
-      // Sets _trying = true so the permanent error listener stays quiet.
-      function tryAudioUrl(au, url) {
-        return new Promise(resolve => {
-          _trying = true;
-          let settled = false;
-          const finish = ok => {
-            if (settled) return; settled = true;
-            _trying = false;
-            clearTimeout(timer);
-            au.removeEventListener('canplay',  onOk);
-            au.removeEventListener('error',    onErr);
-            resolve(ok);
-          };
-          const onOk  = () => finish(true);
-          const onErr = () => finish(false);
-          const timer = setTimeout(() => finish(false), 8000);
-          au.addEventListener('canplay', onOk,  { once: true });
-          au.addEventListener('error',   onErr, { once: true });
-          au.src  = url;
-          au.load();
-        });
-      }
-
-      // Fetch ranked candidate audio URLs from Invidious.
-      // Priority: Invidious-proxied AAC → proxied any → direct AAC → direct any
-      //         → muxed formatStream → corsproxy-wrapped fallback.
-      async function fetchInvAudio(videoId) {
+      // Build a ranked URL list from an Invidious video response.
+      function extractAudioUrls(d) {
         const seen = new Set();
-        const push = (arr, url) => { if (url && !seen.has(url)) { seen.add(url); arr.push(url); } };
-
-        for (let pass = 0; pass < 2; pass++) {
-          for (let a = 0; a < INV.length; a++) {
-            const base = INV[(invI + a) % INV.length];
-            let apiUrl = `${base}/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams`;
-            if (pass === 1) apiUrl = PROXY + encodeURIComponent(apiUrl);
-            try {
-              const ctrl = new AbortController();
-              const tid  = setTimeout(() => ctrl.abort(), 10000);
-              const r    = await fetch(apiUrl, { signal: ctrl.signal });
-              clearTimeout(tid);
-              if (!r.ok) throw new Error(r.status);
-              const d = await r.json();
-
-              const af = (d.adaptiveFormats || [])
-                .filter(f => f.type?.startsWith('audio/') && f.url)
-                .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-
-              const isProxy = u => u && !u.includes('googlevideo.com');
-              const isAAC   = f => f.type?.includes('mp4') || f.encoding === 'aac' || f.container === 'mp4';
-
-              const out = [];
-              af.filter(f => isProxy(f.url) && isAAC(f)).forEach(f => push(out, f.url));
-              af.filter(f => isProxy(f.url)            ).slice(0,2).forEach(f => push(out, f.url));
-              af.filter(f => !isProxy(f.url) && isAAC(f)).forEach(f => push(out, f.url));
-              af.filter(f => !isProxy(f.url)             ).slice(0,2).forEach(f => push(out, f.url));
-              (d.formatStreams || []).filter(f => f.url).slice(0,1).forEach(f => push(out, f.url));
-              // corsproxy tier — wrap first two best candidates
-              out.slice(0,2).forEach(u => push(out, PROXY + encodeURIComponent(u)));
-
-              if (out.length) {
-                invI = (invI + a) % INV.length;
-                return out;
-              }
-            } catch(e) {}
-          }
-        }
-        return [];
+        const add  = (out, u) => { if (u && !seen.has(u)) { seen.add(u); out.push(u); } };
+        const af   = (d.adaptiveFormats || [])
+          .filter(f => f.type?.startsWith('audio/') && f.url)
+          .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+        const isProxy = u => !u.includes('googlevideo.com');
+        const isAAC   = f => f.type?.includes('mp4') || f.encoding === 'aac' || f.container === 'mp4';
+        const out = [];
+        // Tier 1: proxied AAC  (safe + high-compat)
+        af.filter(f => isProxy(f.url) && isAAC(f)).forEach(f => add(out, f.url));
+        // Tier 2: proxied any
+        af.filter(f => isProxy(f.url)).slice(0, 2).forEach(f => add(out, f.url));
+        // Tier 3: direct AAC  (no crossorigin attr = no CORS check on iOS)
+        af.filter(f => !isProxy(f.url) && isAAC(f)).forEach(f => add(out, f.url));
+        // Tier 4: direct any
+        af.filter(f => !isProxy(f.url)).slice(0, 2).forEach(f => add(out, f.url));
+        // Tier 5: muxed formatStream (combined audio+video — iOS ignores video track)
+        (d.formatStreams || []).filter(f => f.url).slice(0, 1).forEach(f => add(out, f.url));
+        // Tier 6: corsproxy wrap of best two candidates
+        out.slice(0, 2).forEach(u => add(out, PROXY + encodeURIComponent(u)));
+        return out;
       }
 
+      // Fetch audio URLs — race ALL Invidious instances in parallel.
+      // Takes as long as the FASTEST instance responds (typically 1-3 s).
+      async function fetchInvAudio(videoId) {
+        const tryOne = (base, proxy) => {
+          let url = `${base}/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams`;
+          if (proxy) url = PROXY + encodeURIComponent(url);
+          const ctrl = new AbortController();
+          const tid  = setTimeout(() => ctrl.abort(), 6000);
+          return fetch(url, { signal: ctrl.signal })
+            .then(r  => { clearTimeout(tid); if (!r.ok) throw 0; return r.json(); })
+            .then(d  => { const u = extractAudioUrls(d); if (!u.length) throw 0; return u; })
+            .catch(() => { clearTimeout(tid); throw 0; });
+        };
+        // Pass 1 — all instances, no proxy
+        const urls = await Promise.any(INV.map(b => tryOne(b, false))).catch(() => null);
+        if (urls?.length) return urls;
+        // Pass 2 — all instances, through corsproxy
+        return await Promise.any(INV.map(b => tryOne(b, true))).catch(() => []);
+      }
+
+      // Set the audio source and start playing immediately.
+      // Remaining candidates sit in _pendingUrls for auto-retry on error.
       async function playOnNative(videoId) {
         loadBar(true);
         const urls = await fetchInvAudio(videoId);
@@ -1613,19 +1609,10 @@
           S.playing = false; updPlayUI();
           return;
         }
-        const au = getAudio();
-        let loaded = false;
-        for (const url of urls) {
-          const ok = await tryAudioUrl(au, url);
-          if (ok) { loaded = true; break; }
-        }
-        if (!loaded) {
-          loadBar(false);
-          toast('Stream unavailable — try another track');
-          S.playing = false; updPlayUI();
-          return;
-        }
-        // audio.src is already set to the working URL — just play
+        const au    = getAudio();
+        _pendingUrls = urls.slice(1);   // save fallbacks
+        au.src       = urls[0];
+        au.load();
         try { await au.play(); } catch(e) {}
         updMediaSession();
       }
