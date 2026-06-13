@@ -1473,54 +1473,107 @@
         ytReady: false,
       };
 
-      // ── Native Audio Engine (iOS lock-screen compatible) ──
-      // YouTube IFrame is suspended by iOS when the screen locks.
-      // We fetch audio-only stream URLs from Invidious and play them
-      // through a native <audio> element, which iOS treats as a proper
-      // audio session and surfaces on the lock screen / Control Centre.
-      let _audio = null;
+      // ── Native Audio Engine ──
+      // Playback uses a native <audio> element + Invidious audio streams.
+      // This is the only approach that survives the iOS lock screen.
+      //
+      // iOS AUTOPLAY RULES:
+      //   audio.play() must be called from a synchronous user-gesture stack.
+      //   After any `await`, iOS drops the gesture context and blocks play().
+      //   Fix: on the very first touch/click we play a silent data URI to
+      //   "unlock" the element — after that, play() works from async code too.
+
+      // Minimal silent WAV (44 bytes, 0 samples) — used to unlock iOS audio.
+      const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+
+      let _audio   = null;
+      let _trying  = false; // true while probing candidate URLs (suppresses permanent handlers)
+      let _unlocked = false; // true once iOS audio element has been unlocked
 
       function getAudio() {
         if (_audio) return _audio;
         _audio = document.getElementById('player-audio');
         _audio.addEventListener('play', () => {
+          if (_trying) return;
           S.playing = true; updPlayUI(); startTick(); loadBar(false); updMediaSession();
         });
         _audio.addEventListener('pause', () => {
+          if (_trying) return;
           S.playing = false; updPlayUI(); stopTick(); updMediaSession();
         });
         _audio.addEventListener('ended', () => {
+          if (_trying) return;
           S.playing = false; updPlayUI(); stopTick();
           if (S.rep) { _audio.currentTime = 0; _audio.play().catch(() => {}); }
           else nextT();
         });
         _audio.addEventListener('error', () => {
+          if (_trying) return; // suppressed — tryAudioUrl handles it
           S.playing = false; updPlayUI(); stopTick(); loadBar(false);
-          toast('Stream error — skipping…');
+          toast('Stream interrupted — skipping…');
           setTimeout(() => nextT(), 1500);
         });
         return _audio;
       }
 
-      // ── Audio URL Fetcher ──
-      // Returns a ranked list of candidate URLs for the track.
-      // Priority: Invidious-proxied AAC → Invidious-proxied any audio
-      //         → direct AAC (works without crossorigin on iOS)
-      //         → direct any audio → muxed formatStream
-      //         → corsproxy-wrapped fallback for anything above
+      // Play a silent clip synchronously from a user-gesture handler to unlock
+      // the iOS audio element. After this, async play() calls are permitted.
+      function unlockAudioEl() {
+        if (_unlocked) return;
+        _unlocked = true;
+        const au = getAudio();
+        _trying = true;
+        au.muted = true;
+        au.src = SILENT_WAV;
+        const p = au.play();
+        if (p) p.then(() => { au.pause(); }).catch(() => {}).finally(() => {
+          au.muted = false;
+          au.removeAttribute('src');
+          au.load();
+          _trying = false;
+        }); else { au.muted = false; _trying = false; }
+      }
+
+      // Probe one candidate URL — resolves true on canplay, false on error or 8 s timeout.
+      // Sets _trying = true so the permanent error listener stays quiet.
+      function tryAudioUrl(au, url) {
+        return new Promise(resolve => {
+          _trying = true;
+          let settled = false;
+          const finish = ok => {
+            if (settled) return; settled = true;
+            _trying = false;
+            clearTimeout(timer);
+            au.removeEventListener('canplay',  onOk);
+            au.removeEventListener('error',    onErr);
+            resolve(ok);
+          };
+          const onOk  = () => finish(true);
+          const onErr = () => finish(false);
+          const timer = setTimeout(() => finish(false), 8000);
+          au.addEventListener('canplay', onOk,  { once: true });
+          au.addEventListener('error',   onErr, { once: true });
+          au.src  = url;
+          au.load();
+        });
+      }
+
+      // Fetch ranked candidate audio URLs from Invidious.
+      // Priority: Invidious-proxied AAC → proxied any → direct AAC → direct any
+      //         → muxed formatStream → corsproxy-wrapped fallback.
       async function fetchInvAudio(videoId) {
         const seen = new Set();
-        const add  = (arr, url) => { if (url && !seen.has(url)) { seen.add(url); arr.push(url); } };
+        const push = (arr, url) => { if (url && !seen.has(url)) { seen.add(url); arr.push(url); } };
 
         for (let pass = 0; pass < 2; pass++) {
           for (let a = 0; a < INV.length; a++) {
             const base = INV[(invI + a) % INV.length];
-            let apiUrl = `${base}/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams,videoId`;
+            let apiUrl = `${base}/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams`;
             if (pass === 1) apiUrl = PROXY + encodeURIComponent(apiUrl);
             try {
               const ctrl = new AbortController();
-              const tid = setTimeout(() => ctrl.abort(), 10000);
-              const r = await fetch(apiUrl, { signal: ctrl.signal });
+              const tid  = setTimeout(() => ctrl.abort(), 10000);
+              const r    = await fetch(apiUrl, { signal: ctrl.signal });
               clearTimeout(tid);
               if (!r.ok) throw new Error(r.status);
               const d = await r.json();
@@ -1529,53 +1582,26 @@
                 .filter(f => f.type?.startsWith('audio/') && f.url)
                 .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
 
-              const isProxied = u => u && !u.includes('googlevideo.com');
-              const isAAC     = f => f.type?.includes('mp4') || f.encoding === 'aac' || f.container === 'mp4';
+              const isProxy = u => u && !u.includes('googlevideo.com');
+              const isAAC   = f => f.type?.includes('mp4') || f.encoding === 'aac' || f.container === 'mp4';
 
-              const proxiedAAC = af.filter(f => isProxied(f.url) && isAAC(f));
-              const proxiedAny = af.filter(f => isProxied(f.url));
-              const directAAC  = af.filter(f => !isProxied(f.url) && isAAC(f));
-              const directAny  = af.filter(f => !isProxied(f.url));
-              const fmtStream  = (d.formatStreams || []).filter(f => f.url);
+              const out = [];
+              af.filter(f => isProxy(f.url) && isAAC(f)).forEach(f => push(out, f.url));
+              af.filter(f => isProxy(f.url)            ).slice(0,2).forEach(f => push(out, f.url));
+              af.filter(f => !isProxy(f.url) && isAAC(f)).forEach(f => push(out, f.url));
+              af.filter(f => !isProxy(f.url)             ).slice(0,2).forEach(f => push(out, f.url));
+              (d.formatStreams || []).filter(f => f.url).slice(0,1).forEach(f => push(out, f.url));
+              // corsproxy tier — wrap first two best candidates
+              out.slice(0,2).forEach(u => push(out, PROXY + encodeURIComponent(u)));
 
-              const candidates = [];
-              // Tier 1 — Invidious-proxied streams (have CORS headers, always safe)
-              proxiedAAC.slice(0,2).forEach(f => add(candidates, f.url));
-              proxiedAny.slice(0,1).forEach(f => add(candidates, f.url));
-              // Tier 2 — direct YouTube CDN (no crossorigin attr = no CORS check, works on iOS)
-              directAAC.slice(0,2).forEach(f  => add(candidates, f.url));
-              directAny.slice(0,1).forEach(f  => add(candidates, f.url));
-              // Tier 3 — muxed streams (audio+video, iOS ignores video)
-              fmtStream.slice(0,1).forEach(f  => add(candidates, f.url));
-              // Tier 4 — wrap everything through corsproxy as last resort
-              [...proxiedAAC, ...directAAC].slice(0,2).forEach(f =>
-                add(candidates, PROXY + encodeURIComponent(f.url))
-              );
-
-              if (candidates.length) {
+              if (out.length) {
                 invI = (invI + a) % INV.length;
-                return candidates;
+                return out;
               }
             } catch(e) {}
           }
         }
         return [];
-      }
-
-      // Try loading a URL into the audio element; resolves true on canplay, false on error.
-      function tryAudioUrl(au, url) {
-        return new Promise(resolve => {
-          const onOk  = () => { cleanup(); resolve(true);  };
-          const onErr = () => { cleanup(); resolve(false); };
-          const cleanup = () => {
-            au.removeEventListener('canplay', onOk);
-            au.removeEventListener('error',   onErr);
-          };
-          au.addEventListener('canplay', onOk,  { once: true });
-          au.addEventListener('error',   onErr, { once: true });
-          au.src = url;
-          au.load();
-        });
       }
 
       async function playOnNative(videoId) {
@@ -1595,14 +1621,14 @@
         }
         if (!loaded) {
           loadBar(false);
-          toast('Stream unavailable — try a different track');
+          toast('Stream unavailable — try another track');
           S.playing = false; updPlayUI();
           return;
         }
-        try { await au.play(); } catch(e) { /* NotAllowedError — user must tap play */ }
+        // audio.src is already set to the working URL — just play
+        try { await au.play(); } catch(e) {}
         updMediaSession();
       }
-
       function handleCredentialResponse(response) {
         // Decode JWT payload
         const base64Url = response.credential.split('.')[1];
@@ -2404,8 +2430,10 @@
         if (S.track)
           localStorage.setItem("sonora_last", JSON.stringify(S.track));
       });
-      document.addEventListener("click", startSilentAudio, { once: true, passive: true });
-      document.addEventListener("touchstart", startSilentAudio, { once: true, passive: true });
+      document.addEventListener("click",      startSilentAudio, { once: true, passive: true });
+      document.addEventListener("touchstart",  startSilentAudio, { once: true, passive: true });
+      document.addEventListener("click",      unlockAudioEl,    { once: true, passive: true });
+      document.addEventListener("touchstart",  unlockAudioEl,    { once: true, passive: true });
       document.addEventListener("DOMContentLoaded", checkReturning);
     </script>
   </body>
