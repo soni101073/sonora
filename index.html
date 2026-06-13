@@ -1088,7 +1088,7 @@
           <div class="ver-footer">
             <span class="ver-dot"></span>
             <span>SONORA</span>
-            <span class="ver-num">v8.1</span>
+            <span class="ver-num">v8.2</span>
             <span class="ver-dot"></span>
           </div>
         </div>
@@ -1523,7 +1523,8 @@
           if (_pendingUrls.length) {
             const next = _pendingUrls.shift();
             _audio.src  = next;
-            _audio.load();
+            // No au.load() — resetting the element here kills iOS user-activation.
+            // Setting .src is enough; play() will start loading automatically.
             _audio.play().catch(() => {});
             return;
           }
@@ -1556,6 +1557,11 @@
 
       // Build a ranked URL list from an Invidious video response.
       function extractAudioUrls(d, invBase, videoId) {
+        // Detect iOS/iPadOS — direct googlevideo.com URLs are IP-locked on iOS
+        // (the URL is generated using the Invidious server's IP, not the user's).
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
         const seen = new Set();
         const add  = (out, u) => { if (u && !seen.has(u)) { seen.add(u); out.push(u); } };
         const af   = (d.adaptiveFormats || [])
@@ -1564,31 +1570,44 @@
         const isProxy = u => !u.includes('googlevideo.com');
         const isAAC   = f => f.type?.includes('mp4') || f.encoding === 'aac' || f.container === 'mp4';
         const out = [];
-        // Tier 0: Invidious-proxied via /latest_version?local=true — avoids IP restriction on iOS.
-        // These stream through the Invidious server itself, so the client IP doesn't matter.
+
+        // Tier 0: Invidious /latest_version?local=true — streams through the Invidious server.
+        // This bypasses IP restriction entirely and is the most reliable path on iOS.
         if (invBase && videoId) {
-          af.filter(f => isAAC(f) && f.itag).slice(0, 2).forEach(f => {
-            add(out, `${invBase}/latest_version?id=${videoId}&itag=${f.itag}&local=true`);
-          });
-          // Also add highest-bitrate non-AAC as backup proxy
-          af.filter(f => f.itag && !isAAC(f)).slice(0, 1).forEach(f => {
-            add(out, `${invBase}/latest_version?id=${videoId}&itag=${f.itag}&local=true`);
-          });
+          // AAC/m4a first (best iOS compat), then highest-bitrate WebM/Opus as backup
+          af.filter(f => isAAC(f) && f.itag).slice(0, 3).forEach(f =>
+            add(out, `${invBase}/latest_version?id=${videoId}&itag=${f.itag}&local=true`)
+          );
+          af.filter(f => !isAAC(f) && f.itag).slice(0, 2).forEach(f =>
+            add(out, `${invBase}/latest_version?id=${videoId}&itag=${f.itag}&local=true`)
+          );
         }
-        // Tier 1: proxied AAC  (URL already goes through Invidious, safe + high-compat)
+
+        // Tier 1: URLs already proxied through Invidious (don't contain googlevideo.com)
         af.filter(f => isProxy(f.url) && isAAC(f)).forEach(f => add(out, f.url));
-        // Tier 2: proxied any
         af.filter(f => isProxy(f.url)).slice(0, 2).forEach(f => add(out, f.url));
-        // Tier 3: direct AAC  (may fail on iOS due to IP restriction)
-        af.filter(f => !isProxy(f.url) && isAAC(f)).forEach(f => add(out, f.url));
-        // Tier 4: direct any
-        af.filter(f => !isProxy(f.url)).slice(0, 2).forEach(f => add(out, f.url));
-        // Tier 5: muxed formatStream (combined audio+video — iOS ignores video track)
+
+        // Tier 2: Direct googlevideo URLs — only on non-iOS (they fail on iPhone/iPad)
+        if (!isIOS) {
+          af.filter(f => !isProxy(f.url) && isAAC(f)).forEach(f => add(out, f.url));
+          af.filter(f => !isProxy(f.url)).slice(0, 2).forEach(f => add(out, f.url));
+        }
+
+        // Tier 3: muxed formatStream (combined audio+video — iOS plays audio track fine)
         (d.formatStreams || []).filter(f => f.url).slice(0, 1).forEach(f => add(out, f.url));
-        // Tier 6: corsproxy wrap of best direct candidate
-        af.filter(f => !isProxy(f.url) && isAAC(f)).slice(0, 1).forEach(f => {
-          add(out, PROXY + encodeURIComponent(f.url));
-        });
+
+        // Tier 4: corsproxy.io wrapping of best direct URL — corsproxy acts as IP relay,
+        // so the googlevideo server sees corsproxy's IP (same as Invidious server).
+        af.filter(f => !isProxy(f.url) && isAAC(f)).slice(0, 2).forEach(f =>
+          add(out, PROXY + encodeURIComponent(f.url))
+        );
+        if (isIOS) {
+          // On iOS also wrap non-AAC as last-resort since we skipped Tier 2
+          af.filter(f => !isProxy(f.url) && !isAAC(f)).slice(0, 1).forEach(f =>
+            add(out, PROXY + encodeURIComponent(f.url))
+          );
+        }
+
         return out;
       }
 
