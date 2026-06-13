@@ -564,6 +564,118 @@
         transition:opacity .2s,transform .2s;
       }
       #toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+      /* ── GLASSMORPHISM ── */
+      .glass {
+        background: rgba(255,255,255,0.04);
+        backdrop-filter: blur(28px) saturate(180%);
+        -webkit-backdrop-filter: blur(28px) saturate(180%);
+        border: 0.5px solid rgba(255,255,255,0.10);
+        border-radius: 20px;
+      }
+      .glass-sm {
+        background: rgba(255,255,255,0.05);
+        backdrop-filter: blur(20px) saturate(160%);
+        -webkit-backdrop-filter: blur(20px) saturate(160%);
+        border: 0.5px solid rgba(255,255,255,0.09);
+        border-radius: 14px;
+      }
+      /* Full player — bottom glass card wrapping meta+scrubber+controls+vol */
+      #fp-glass-panel {
+        margin: 0 12px 10px;
+        padding: 6px 0 4px;
+        background: rgba(255,255,255,0.048);
+        backdrop-filter: blur(40px) saturate(200%);
+        -webkit-backdrop-filter: blur(40px) saturate(200%);
+        border: 0.5px solid rgba(255,255,255,0.10);
+        border-radius: 26px;
+        overflow: hidden;
+      }
+      /* Mini player enhanced glass */
+      #mini {
+        background: rgba(10,10,14,0.72) !important;
+        backdrop-filter: blur(60px) saturate(220%) !important;
+        -webkit-backdrop-filter: blur(60px) saturate(220%) !important;
+        border-top: 0.5px solid rgba(255,255,255,0.10) !important;
+      }
+      /* Tab bar enhanced glass */
+      #tabs {
+        background: rgba(6,6,9,0.78) !important;
+        backdrop-filter: blur(60px) saturate(200%) !important;
+        -webkit-backdrop-filter: blur(60px) saturate(200%) !important;
+      }
+      /* Track items glass on hover / active / now-playing */
+      .trk {
+        border: 0.5px solid transparent;
+        transition: background .15s, border-color .15s;
+      }
+      .trk:active {
+        background: rgba(255,255,255,0.055) !important;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-color: rgba(255,255,255,0.08);
+      }
+      .trk.now {
+        background: rgba(245,83,29,0.08) !important;
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-color: rgba(245,83,29,0.18) !important;
+      }
+      /* Search bar glass */
+      .sbar {
+        background: rgba(255,255,255,0.052) !important;
+        backdrop-filter: blur(20px) saturate(160%) !important;
+        -webkit-backdrop-filter: blur(20px) saturate(160%) !important;
+        border-color: rgba(255,255,255,0.09) !important;
+      }
+      .sbar:focus-within {
+        background: rgba(255,255,255,0.082) !important;
+        border-color: rgba(255,255,255,0.15) !important;
+      }
+      /* Quick tiles glass shimmer */
+      .qtile-dim {
+        background: linear-gradient(135deg,rgba(255,255,255,0.07) 0%,rgba(0,0,0,0.25) 100%) !important;
+      }
+      /* Welcome form card glass */
+      .wlc-form {
+        background: rgba(255,255,255,0.04) !important;
+        backdrop-filter: blur(24px) !important;
+        -webkit-backdrop-filter: blur(24px) !important;
+        border: 0.5px solid rgba(255,255,255,0.09) !important;
+        border-radius: 24px !important;
+        padding: 28px 24px 20px !important;
+        margin-top: 40px !important;
+      }
+      /* Folder picker glass */
+      #fpick-inner {
+        background: rgba(16,16,22,0.88) !important;
+        backdrop-filter: blur(48px) saturate(200%) !important;
+        -webkit-backdrop-filter: blur(48px) saturate(200%) !important;
+        border: 0.5px solid rgba(255,255,255,0.12) !important;
+      }
+      /* Toast glass */
+      #toast {
+        background: rgba(20,20,26,0.90) !important;
+        backdrop-filter: blur(32px) saturate(200%) !important;
+        -webkit-backdrop-filter: blur(32px) saturate(200%) !important;
+        border-color: rgba(255,255,255,0.12) !important;
+      }
+      /* Close button glass */
+      .fp-dn {
+        background: rgba(255,255,255,0.08) !important;
+        backdrop-filter: blur(16px) !important;
+        -webkit-backdrop-filter: blur(16px) !important;
+        border: 0.5px solid rgba(255,255,255,0.12) !important;
+      }
+      /* Heart/save button glass */
+      .fp-hb {
+        background: rgba(255,255,255,0.06) !important;
+        backdrop-filter: blur(12px) !important;
+        -webkit-backdrop-filter: blur(12px) !important;
+      }
+      .fp-hb.sv {
+        background: rgba(245,83,29,0.14) !important;
+      }
     </style>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="https://www.youtube.com/iframe_api" async></script>
@@ -571,6 +683,7 @@
   <body>
     <!-- Loading bar (top, appears while fetching audio) -->
     <div id="load-bar"><div id="load-fill"></div></div>
+    <audio id="player-audio" playsinline webkit-playsinline preload="metadata" crossorigin="anonymous"></audio>
 
     <!-- WELCOME -->
     <div id="welcome">
@@ -688,6 +801,7 @@
           </div>
         </div>
       </div>
+      <div id="fp-glass-panel">
       <div class="fp-meta">
         <div class="fp-tx">
           <div class="fp-title" id="fp-tt">Nothing playing</div>
@@ -828,6 +942,7 @@
             <path d="M15.54 8.46a5 5 0 010 7.07" /></svg
         ></span>
       </div>
+      </div><!-- /fp-glass-panel -->
     </div>
 
     <!-- SHELL -->
@@ -1358,81 +1473,81 @@
         ytReady: false,
       };
 
-      // ── YouTube IFrame Engine ──
-      let __ytPlayer = null;
-      let __ctx = null;
-      
-      window.onYouTubeIframeAPIReady = function() {
-        __ytPlayer = new YT.Player('yt-player', {
-          height: '10',
-          width: '10',
-          videoId: '',
-          playerVars: { autoplay: 0, controls: 0, disablekb: 1, fs: 0, rel: 0, playsinline: 1 },
-          events: {
-            onReady: (e) => { S.ytReady = true; },
-            onStateChange: onYTStateChange,
-            onError: onYTError
-          }
+      // ── Native Audio Engine (iOS lock-screen compatible) ──
+      // YouTube IFrame is suspended by iOS when the screen locks.
+      // We fetch audio-only stream URLs from Invidious and play them
+      // through a native <audio> element, which iOS treats as a proper
+      // audio session and surfaces on the lock screen / Control Centre.
+      let _audio = null;
+
+      function getAudio() {
+        if (_audio) return _audio;
+        _audio = document.getElementById('player-audio');
+        _audio.addEventListener('play', () => {
+          S.playing = true; updPlayUI(); startTick(); loadBar(false); updMediaSession();
         });
-      };
-      
-      function ensureAudioContext() {
-        if (!__ctx) {
-          __ctx = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        if (__ctx.state === 'suspended') {
-          __ctx.resume();
-        }
-        // Play silent buffer for iOS keep-alive
-        const buf = __ctx.createBuffer(1, 1, 22050);
-        const src = __ctx.createBufferSource();
-        src.buffer = buf;
-        src.connect(__ctx.destination);
-        src.start(0);
+        _audio.addEventListener('pause', () => {
+          S.playing = false; updPlayUI(); stopTick(); updMediaSession();
+        });
+        _audio.addEventListener('ended', () => {
+          S.playing = false; updPlayUI(); stopTick();
+          if (S.rep) { _audio.currentTime = 0; _audio.play().catch(() => {}); }
+          else nextT();
+        });
+        _audio.addEventListener('error', () => {
+          S.playing = false; updPlayUI(); stopTick(); loadBar(false);
+          toast('Stream error — skipping…');
+          setTimeout(() => nextT(), 1500);
+        });
+        return _audio;
       }
 
-      function onYTStateChange(e) {
-        if (e.data === YT.PlayerState.PLAYING) {
-          S.playing = true;
-          updPlayUI();
-          startTick();
-          loadBar(false);
-          ensureAudioContext();
-          updMediaSession();
-        } else if (e.data === YT.PlayerState.PAUSED) {
-          S.playing = false;
-          updPlayUI();
-          stopTick();
-          updMediaSession();
-        } else if (e.data === YT.PlayerState.ENDED) {
-          S.playing = false;
-          updPlayUI();
-          stopTick();
-          if (S.rep) {
-            __ytPlayer.seekTo(0);
-            __ytPlayer.playVideo();
-          } else {
-            nextT();
+      // Fetch audio-only stream URL from Invidious /api/v1/videos/{id}
+      async function fetchInvAudio(videoId) {
+        for (let pass = 0; pass < 2; pass++) {
+          for (let a = 0; a < INV.length; a++) {
+            const base = INV[(invI + a) % INV.length];
+            let url = `${base}/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams`;
+            if (pass === 1) url = PROXY + encodeURIComponent(url);
+            try {
+              const ctrl = new AbortController();
+              const tid = setTimeout(() => ctrl.abort(), 9000);
+              const r = await fetch(url, { signal: ctrl.signal });
+              clearTimeout(tid);
+              if (!r.ok) throw new Error(r.status);
+              const d = await r.json();
+              const formats = (d.adaptiveFormats || [])
+                .filter(f => f.type?.startsWith('audio/') && f.url)
+                .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+              // iOS prefers AAC/mp4 — pick it first, fallback to best available
+              const best =
+                formats.find(f => f.type.includes('mp4') || f.encoding === 'aac') ||
+                formats[0] ||
+                (d.formatStreams || []).find(f => f.url);
+              if (best?.url) {
+                invI = (invI + a) % INV.length;
+                return best.url;
+              }
+            } catch(e) {}
           }
         }
+        return null;
       }
 
-      function onYTError(e) {
-        S.playing = false;
-        updPlayUI();
-        stopTick();
-        loadBar(false);
-        toast("Stream error — skipping...");
-        setTimeout(() => nextT(), 1500);
-      }
-
-      function playOnNative(videoId) {
-        if (!S.ytReady || !__ytPlayer) {
-          toast("Player not ready, wait a sec...");
+      async function playOnNative(videoId) {
+        loadBar(true);
+        const url = await fetchInvAudio(videoId);
+        if (!url) {
+          loadBar(false);
+          toast('Could not load stream — try another track');
+          S.playing = false; updPlayUI();
           return;
         }
-        ensureAudioContext();
-        __ytPlayer.loadVideoById(videoId);
+        const au = getAudio();
+        au.src = url;
+        au.load();
+        try { await au.play(); } catch(e) { /* autoplay blocked — user must tap */ }
+        updMediaSession();
       }
 
       function handleCredentialResponse(response) {
@@ -1649,9 +1764,10 @@
       }
 
       function togPlay() {
-        if (!S.track || !__ytPlayer) return;
-        if (S.playing) __ytPlayer.pauseVideo();
-        else __ytPlayer.playVideo();
+        if (!S.track) return;
+        const au = getAudio();
+        if (S.playing) au.pause();
+        else au.play().catch(() => {});
       }
       function nextT() {
         if (!S.queue.length) return;
@@ -1661,8 +1777,9 @@
         playTrack(S.queue[S.qi], S.queue, S.qi);
       }
       function prevT() {
-        if (__ytPlayer && __ytPlayer.getCurrentTime() > 3) {
-          __ytPlayer.seekTo(0);
+        const au = getAudio();
+        if (au.currentTime > 3) {
+          au.currentTime = 0;
           return;
         }
         if (!S.queue.length) return;
@@ -1670,10 +1787,11 @@
         playTrack(S.queue[S.qi], S.queue, S.qi);
       }
       function seekTo(v) {
-        if (__ytPlayer && __ytPlayer.getDuration() > 0) __ytPlayer.seekTo((v / 100) * __ytPlayer.getDuration(), true);
+        const au = getAudio();
+        if (au.duration && !isNaN(au.duration)) au.currentTime = (v / 100) * au.duration;
       }
       function setVol(v) {
-        if (__ytPlayer) __ytPlayer.setVolume(v);
+        getAudio().volume = Math.max(0, Math.min(1, v / 100));
       }
       function toggleSh() {
         S.shuf = !S.shuf;
@@ -1706,9 +1824,10 @@
       function startTick() {
         stopTick();
         S.tick = setInterval(() => {
-          if (!S.playing || !__ytPlayer) return;
-          const dur = __ytPlayer.getDuration();
-          const cur = __ytPlayer.getCurrentTime();
+          if (!S.playing) return;
+          const au = getAudio();
+          const dur = au.duration;
+          const cur = au.currentTime;
           if (!dur || isNaN(dur) || dur <= 0) return;
           const p = (cur / dur) * 100;
           const sk = document.getElementById("fp-sk");
@@ -1718,16 +1837,9 @@
           document.getElementById("fp-cur").textContent = fmt(cur);
           document.getElementById("fp-dur").textContent = fmt(dur);
           try {
-            if (
-              "mediaSession" in navigator &&
-              "setPositionState" in navigator.mediaSession
-            )
-              navigator.mediaSession.setPositionState({
-                duration: dur,
-                playbackRate: 1,
-                position: cur,
-              });
-          } catch (e) {}
+            if ("mediaSession" in navigator && "setPositionState" in navigator.mediaSession)
+              navigator.mediaSession.setPositionState({ duration: dur, playbackRate: 1, position: cur });
+          } catch(e) {}
         }, 500);
       }
       function stopTick() {
@@ -2164,8 +2276,9 @@
       document.addEventListener("visibilitychange", () => {
         if (_iosCtx && _iosCtx.state === "suspended")
           _iosCtx.resume().catch(() => {});
-        if (!document.hidden && S.playing && __ytPlayer) {
-          setTimeout(() => { try { __ytPlayer.playVideo(); } catch(e) {} }, 400);
+        if (!document.hidden && S.playing) {
+          const au = getAudio();
+          if (au.paused) setTimeout(() => au.play().catch(() => {}), 400);
         }
       });
 
@@ -2173,44 +2286,54 @@
       window.addEventListener("pageshow", () => {
         if (_iosCtx && _iosCtx.state === "suspended")
           _iosCtx.resume().catch(() => {});
-        if (S.playing && __ytPlayer)
-          setTimeout(() => { try { __ytPlayer.playVideo(); } catch(e) {} }, 600);
+        if (S.playing) {
+          const au = getAudio();
+          if (au.paused) setTimeout(() => au.play().catch(() => {}), 600);
+        }
       });
 
       // ── Service Worker ──
       // Media Session for iOS Lock Screen
       function updMediaSession() {
         if (!("mediaSession" in navigator) || !S.track) return;
+        const thumb = S.track.thumb;
         navigator.mediaSession.metadata = new MediaMetadata({
           title: S.track.title,
           artist: S.track.artist || "SONORA",
           album: "SONORA",
-          artwork: S.track.thumb
-            ? [{ src: S.track.thumb, sizes: "512x512", type: "image/jpeg" }]
+          artwork: thumb
+            ? [
+                { src: thumb, sizes: "96x96",   type: "image/jpeg" },
+                { src: thumb, sizes: "256x256",  type: "image/jpeg" },
+                { src: thumb, sizes: "512x512",  type: "image/jpeg" },
+              ]
             : [],
         });
         navigator.mediaSession.playbackState = S.playing ? "playing" : "paused";
-        navigator.mediaSession.setActionHandler("play", () => {
-          if (__ytPlayer) { try { __ytPlayer.playVideo(); } catch(e) {} }
-        });
-        navigator.mediaSession.setActionHandler("pause", () => {
-          if (__ytPlayer) { try { __ytPlayer.pauseVideo(); } catch(e) {} }
-        });
+        const au = getAudio();
+        navigator.mediaSession.setActionHandler("play",  () => au.play().catch(() => {}));
+        navigator.mediaSession.setActionHandler("pause", () => au.pause());
         navigator.mediaSession.setActionHandler("previoustrack", prevT);
-        navigator.mediaSession.setActionHandler("nexttrack", nextT);
+        navigator.mediaSession.setActionHandler("nexttrack",     nextT);
         try {
-          navigator.mediaSession.setActionHandler("seekto", (d) => {
-            if (__ytPlayer && d.seekTime != null) __ytPlayer.seekTo(d.seekTime, true);
+          navigator.mediaSession.setActionHandler("seekto", d => {
+            if (d.seekTime != null && au.duration) au.currentTime = d.seekTime;
+          });
+          navigator.mediaSession.setActionHandler("seekbackward", d => {
+            au.currentTime = Math.max(0, au.currentTime - (d.seekOffset || 10));
+          });
+          navigator.mediaSession.setActionHandler("seekforward", d => {
+            au.currentTime = Math.min(au.duration || 0, au.currentTime + (d.seekOffset || 10));
           });
         } catch(e) {}
         try {
-          if (__ytPlayer) {
-            const dur = __ytPlayer.getDuration?.() || 0;
-            const cur = __ytPlayer.getCurrentTime?.() || 0;
-            if (dur && !isNaN(dur))
-              navigator.mediaSession.setPositionState({ duration: dur, playbackRate: 1, position: cur });
-          }
-        } catch (e) {}
+          if (au.duration && !isNaN(au.duration))
+            navigator.mediaSession.setPositionState({
+              duration: au.duration,
+              playbackRate: au.playbackRate || 1,
+              position: au.currentTime || 0,
+            });
+        } catch(e) {}
       }
 
       if ("serviceWorker" in navigator) {
