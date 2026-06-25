@@ -1451,7 +1451,7 @@
       const ICO_SAVE = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>`;
 
       // ── Invidious instances (for search only) ──
-      const INV = [
+      let INV = [
         "https://inv.nadeko.net",
         "https://invidious.nerdvpn.de",
         "https://inv.thepixora.com",
@@ -1631,12 +1631,80 @@
         return await Promise.any(INV.map(b => tryOne(b, true))).catch(() => []);
       }
 
+      // Fetch dynamic Invidious instances on app load.
+      async function initDynamicInstances() {
+        try {
+          const res = await fetch("https://api.invidious.io/instances.json?sort_by=type,health");
+          if (!res.ok) return;
+          const data = await res.json();
+          if (Array.isArray(data) && data.length) {
+            const active = data
+              .filter(item => {
+                const info = item[1];
+                return info && info.type === 'https' && info.monitor && !info.monitor.down;
+              })
+              .map(item => item[1].uri)
+              .filter(uri => uri);
+            if (active.length) {
+              const unique = Array.from(new Set([...active, ...INV]));
+              INV = unique.slice(0, 15);
+            }
+          }
+        } catch (e) {
+          console.warn("Failed to fetch dynamic Invidious instances:", e);
+        }
+      }
+
+      // Fallback: Fetch audio stream using public Cobalt extractor API instances.
+      async function fetchCobaltAudio(videoId) {
+        const cobaltInstances = [
+          "https://api.cobalt.tools/api/json",
+          "https://co.wuk.sh/api/json"
+        ];
+        const tryOneCobalt = async (apiBase) => {
+          const res = await fetch(apiBase, {
+            method: "POST",
+            headers: {
+              "Accept": "application/json",
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              url: `https://www.youtube.com/watch?v=${videoId}`,
+              videoQuality: "144",
+              downloadMode: "audio",
+              audioFormat: "mp3",
+              audioBitrate: "128"
+            })
+          });
+          if (!res.ok) throw new Error("Cobalt request failed");
+          const data = await res.json();
+          if (data && data.url) {
+            return [data.url];
+          }
+          throw new Error("No URL returned from Cobalt");
+        };
+
+        for (const apiBase of cobaltInstances) {
+          try {
+            const urls = await tryOneCobalt(apiBase);
+            if (urls && urls.length) return urls;
+          } catch (e) {
+            console.warn(`Cobalt instance ${apiBase} failed:`, e);
+          }
+        }
+        return [];
+      }
+
       // Set the audio source and start playing immediately.
       // Remaining candidates sit in _pendingUrls for auto-retry on error.
       async function playOnNative(videoId) {
         loadBar(true);
-        const urls = await fetchInvAudio(videoId);
-        if (!urls.length) {
+        let urls = await fetchInvAudio(videoId);
+        if (!urls || !urls.length) {
+          console.log("Invidious failed, trying Cobalt...");
+          urls = await fetchCobaltAudio(videoId);
+        }
+        if (!urls || !urls.length) {
           loadBar(false);
           toast('No stream found — try a different track');
           S.playing = false; updPlayUI();
@@ -2464,7 +2532,10 @@
       document.addEventListener("touchstart",  startSilentAudio, { once: true, passive: true });
       document.addEventListener("click",      unlockAudioEl,    { once: true, passive: true });
       document.addEventListener("touchstart",  unlockAudioEl,    { once: true, passive: true });
-      document.addEventListener("DOMContentLoaded", checkReturning);
+      document.addEventListener("DOMContentLoaded", () => {
+        checkReturning();
+        initDynamicInstances();
+      });
     </script>
   </body>
 </html>
