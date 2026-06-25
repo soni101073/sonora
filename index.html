@@ -1606,6 +1606,7 @@
       let _audio       = null;
       let _trying      = false;   // true while unlockAudioEl plays the silent clip
       let _unlocked    = false;   // true after first iOS unlock
+      let _ytPlayer     = null;   // YouTube IFrame player
       let _pendingUrls = [];      // fallback URLs to try if a stream errors mid-play
 
       function getAudio() {
@@ -1764,6 +1765,39 @@
         }
       }
 
+      // ── YouTube IFrame Player ──
+      window.onYouTubeIframeAPIReady = function() {
+        _ytPlayer = new YT.Player('yt-player', {
+          height: '1', width: '1',
+          playerVars: { autoplay: 0, controls: 0, disablekb: 1, fs: 0,
+                        iv_load_policy: 3, modestbranding: 1, playsinline: 1 },
+          events: {
+            onReady:       () => { S.ytReady = true; },
+            onStateChange: onYTState,
+            onError:       onYTErr,
+          }
+        });
+      };
+      function onYTState(e) {
+        if (!S.track || S.track.source !== 'youtube') return;
+        if (e.data === YT.PlayerState.PLAYING) {
+          S.playing = true;  updPlayUI(); startTick(); loadBar(false); updMediaSession();
+        } else if (e.data === YT.PlayerState.PAUSED) {
+          S.playing = false; updPlayUI(); stopTick();  updMediaSession();
+        } else if (e.data === YT.PlayerState.ENDED) {
+          S.playing = false; updPlayUI(); stopTick();
+          if (S.rep) { _ytPlayer.seekTo(0); _ytPlayer.playVideo(); } else nextT();
+        } else if (e.data === YT.PlayerState.BUFFERING) {
+          loadBar(true);
+        }
+      }
+      function onYTErr() {
+        if (!S.track || S.track.source !== 'youtube') return;
+        loadBar(false); S.playing = false; updPlayUI(); stopTick();
+        toast('Video unavailable — try another track');
+      }
+
+
       // Fallback: Fetch audio stream using public Cobalt extractor API instances.
       async function fetchCobaltAudio(videoId) {
         // Cobalt v10 API (updated endpoint format)
@@ -1808,48 +1842,28 @@
       // Remaining candidates sit in _pendingUrls for auto-retry on error.
       async function playOnNative(t) {
         loadBar(true);
-        const au = getAudio();
 
         // ── JioSaavn direct stream ──
         if (t.source === 'saavn' && t.src) {
+          const au = getAudio();
           _pendingUrls = [];
           au.src = t.src;
-          try {
-            await au.play();
-          } catch(e) {
+          try { await au.play(); }
+          catch(e) {
             if (e?.name === 'NotAllowedError') { S.playing = false; updPlayUI(); loadBar(false); toast('Tap ▶ to play'); }
           }
           return;
         }
 
-        // ── YouTube via Invidious ──
-        const videoId = t.videoId;
-        let urls = await fetchInvAudio(videoId);
-        if (!urls || !urls.length) {
-          console.log("Invidious failed, trying Cobalt...");
-          urls = await fetchCobaltAudio(videoId);
-        }
-        if (!urls || !urls.length) {
+        // ── YouTube via IFrame API (fast — no URL extraction) ──
+        if (!_ytPlayer || !S.ytReady) {
           loadBar(false);
-          toast('No stream found — try a different track');
+          toast('YouTube player loading… try again in a moment');
           S.playing = false; updPlayUI();
           return;
         }
-        _pendingUrls = urls.slice(1);   // save fallbacks
-        au.src       = urls[0];
-        // Don't call au.load() explicitly — it can reset iOS user-activation state.
-        // au.play() triggers loading automatically on all modern browsers.
-        try {
-          await au.play();
-        } catch(e) {
-          if (e?.name === 'NotAllowedError') {
-            // iOS blocked play — gesture context was lost. Show tap-to-play.
-            S.playing = false; updPlayUI(); loadBar(false);
-            toast('Tap ▶ to play');
-          }
-          // Other errors (AbortError etc.) are handled by the 'error' event listener
-        }
-        updMediaSession();
+        _ytPlayer.loadVideoById(t.videoId);
+        // onYTState handles play/pause/end events
       }
       function handleCredentialResponse(response) {
         // Decode JWT payload
@@ -2104,9 +2118,13 @@
 
       function togPlay() {
         if (!S.track) return;
-        const au = getAudio();
-        if (S.playing) au.pause();
-        else au.play().catch(() => {});
+        if (S.track.source === 'youtube') {
+          if (!_ytPlayer) return;
+          if (S.playing) _ytPlayer.pauseVideo(); else _ytPlayer.playVideo();
+        } else {
+          const au = getAudio();
+          if (S.playing) au.pause(); else au.play().catch(() => {});
+        }
       }
       function nextT() {
         if (!S.queue.length) return;
@@ -2126,11 +2144,17 @@
         playTrack(S.queue[S.qi], S.queue, S.qi);
       }
       function seekTo(v) {
-        const au = getAudio();
-        if (au.duration && !isNaN(au.duration)) au.currentTime = (v / 100) * au.duration;
+        if (S.track?.source === 'youtube') {
+          if (_ytPlayer) { const d = _ytPlayer.getDuration(); if (d > 0) _ytPlayer.seekTo((v/100)*d, true); }
+        } else {
+          const au = getAudio();
+          if (au.duration && !isNaN(au.duration)) au.currentTime = (v / 100) * au.duration;
+        }
       }
       function setVol(v) {
-        getAudio().volume = Math.max(0, Math.min(1, v / 100));
+        const pct = Math.max(0, Math.min(100, +v));
+        getAudio().volume = pct / 100;
+        if (_ytPlayer) _ytPlayer.setVolume(pct);
       }
       function toggleSh() {
         S.shuf = !S.shuf;
@@ -2164,9 +2188,14 @@
         stopTick();
         S.tick = setInterval(() => {
           if (!S.playing) return;
-          const au = getAudio();
-          const dur = au.duration;
-          const cur = au.currentTime;
+          let dur, cur;
+          if (S.track?.source === 'youtube' && _ytPlayer) {
+            dur = _ytPlayer.getDuration();
+            cur = _ytPlayer.getCurrentTime();
+          } else {
+            const au = getAudio();
+            dur = au.duration; cur = au.currentTime;
+          }
           if (!dur || isNaN(dur) || dur <= 0) return;
           const p = (cur / dur) * 100;
           const sk = document.getElementById("fp-sk");
@@ -2657,22 +2686,25 @@
         navigator.mediaSession.playbackState = S.playing ? "playing" : "paused";
         navigator.mediaSession.setActionHandler("play", () => {
           resumeSilentAudio();
-          getAudio().play().catch(() => {});
+          if (S.track?.source === 'youtube') _ytPlayer?.playVideo();
+          else getAudio().play().catch(() => {});
         });
         navigator.mediaSession.setActionHandler("pause", () => {
-          getAudio().pause();
+          if (S.track?.source === 'youtube') _ytPlayer?.pauseVideo();
+          else getAudio().pause();
         });
         navigator.mediaSession.setActionHandler("previoustrack", prevT);
         navigator.mediaSession.setActionHandler("nexttrack", nextT);
         try {
-          const au = getAudio();
-          const dur = au.duration;
-          const pos = au.currentTime;
+          let dur, pos;
+          if (S.track?.source === 'youtube' && _ytPlayer) {
+            dur = _ytPlayer.getDuration(); pos = _ytPlayer.getCurrentTime();
+          } else {
+            const au = getAudio(); dur = au.duration; pos = au.currentTime;
+          }
           if (dur && !isNaN(dur) && dur > 0)
             navigator.mediaSession.setPositionState({
-              duration: dur,
-              playbackRate: 1,
-              position: Math.min(pos || 0, dur),
+              duration: dur, playbackRate: 1, position: Math.min(pos || 0, dur),
             });
         } catch (e) {}
       }
