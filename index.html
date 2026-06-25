@@ -23,35 +23,7 @@
       type="image/png"
       href="SONORA.png"
     />
-    <script>
-      (function () {
-        var base = window.location.origin + window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1);
-        var m = {
-          name: "SONORA",
-          short_name: "SONORA",
-          start_url: window.location.href,
-          display: "standalone",
-          background_color: "#000",
-          theme_color: "#000",
-          icons: [
-            {
-              src: base + "SONORA.png",
-              sizes: "192x192",
-              type: "image/png",
-            },
-            {
-              src: base + "SONORA.png",
-              sizes: "512x512",
-              type: "image/png",
-            },
-          ],
-        };
-        var l = document.createElement("link");
-        l.rel = "manifest";
-        l.href = "data:application/json;charset=utf-8," + encodeURIComponent(JSON.stringify(m));
-        document.currentScript.after(l);
-      })();
-    </script>
+    <link rel="manifest" href="manifest.json" />
     <style>
       *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
       :root {
