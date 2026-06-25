@@ -1727,7 +1727,7 @@
           let url = `${base}/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams`;
           if (proxy) url = PROXY + encodeURIComponent(url);
           const ctrl = new AbortController();
-          const tid  = setTimeout(() => ctrl.abort(), 6000);
+          const tid  = setTimeout(() => ctrl.abort(), 5000);
           return fetch(url, { signal: ctrl.signal })
             .then(r  => { clearTimeout(tid); if (!r.ok) throw 0; return r.json(); })
             .then(d  => { const u = extractAudioUrls(d, proxy ? null : base, videoId); if (!u.length) throw 0; return u; })
@@ -1972,11 +1972,15 @@
       }
 
       // ── JioSaavn Search (primary for Indian music) ──
+      const SAAVN_BASES = [
+        'https://saavn.dev',
+        'https://jiosaavn-api-privatecvc2.vercel.app',
+      ];
       async function saavnSearch(q) {
-        try {
-          const url = `https://saavn.dev/api/search/songs?query=${encodeURIComponent(q)}&page=1&limit=20`;
+        const tryBase = async (base) => {
+          const url = `${base}/api/search/songs?query=${encodeURIComponent(q)}&page=1&limit=20`;
           const ctrl = new AbortController();
-          const tid = setTimeout(() => ctrl.abort(), 8000);
+          const tid = setTimeout(() => ctrl.abort(), 4000);
           const r = await fetch(url, { signal: ctrl.signal });
           clearTimeout(tid);
           if (!r.ok) throw 0;
@@ -1991,34 +1995,33 @@
             thumb: (s.image || []).slice(-1)[0]?.url || null,
             source: 'saavn'
           })).filter(t => t.src);
-        } catch {
-          return null;
-        }
+        };
+        // Race all Saavn endpoints — fastest wins
+        return await Promise.any(SAAVN_BASES.map(tryBase)).catch(() => null);
       }
 
       // ── Search ──
       async function invSearch(q) {
         const fields = "videoId,title,author,lengthSeconds,videoThumbnails";
-        for (let pass = 0; pass < 2; pass++) {
-          for (let a = 0; a < INV.length; a++) {
-            const base = INV[(invI + a) % INV.length];
-            let url = `${base}/api/v1/search?q=${encodeURIComponent(q)}&type=video&fields=${fields}`;
-            if (pass === 1) url = PROXY + encodeURIComponent(url);
-            try {
-              const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 8000);
-              const r = await fetch(url, { signal: controller.signal });
-              clearTimeout(timeoutId);
-              if (!r.ok) throw new Error(r.status);
-              const data = await r.json();
-              if (Array.isArray(data) && data.length) {
-                invI = (invI + a) % INV.length;
-                return data;
-              }
-            } catch {}
-          }
-        }
-        return null;
+        const tryOne = async (base, proxy) => {
+          let url = `${base}/api/v1/search?q=${encodeURIComponent(q)}&type=video&fields=${fields}`;
+          if (proxy) url = PROXY + encodeURIComponent(url);
+          const ctrl = new AbortController();
+          const tid = setTimeout(() => ctrl.abort(), 5000);
+          try {
+            const r = await fetch(url, { signal: ctrl.signal });
+            clearTimeout(tid);
+            if (!r.ok) throw 0;
+            const data = await r.json();
+            if (Array.isArray(data) && data.length) return data;
+            throw 0;
+          } catch { clearTimeout(tid); throw 0; }
+        };
+        // Race ALL instances in parallel — fastest winner returns
+        const data = await Promise.any(INV.map(b => tryOne(b, false))).catch(() => null);
+        if (data) return data;
+        // Fallback: try top 4 instances through CORS proxy
+        return await Promise.any(INV.slice(0, 4).map(b => tryOne(b, true))).catch(() => null);
       }
 
       let sTimer = null;
@@ -2677,17 +2680,12 @@
       if ("serviceWorker" in navigator) {
         const sw = `const C='sn8';self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll([location.pathname])));self.skipWaiting();});self.addEventListener('activate',()=>self.clients.claim());self.addEventListener('fetch',e=>{if(e.request.url.includes('invidious')||e.request.url.includes('saavn')||e.request.url.includes('corsproxy'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));})`;
         navigator.serviceWorker
-          .register(
-            URL.createObjectURL(
-              new Blob([sw], { type: "application/javascript" }),
-            ),
-          )
+          .register(URL.createObjectURL(new Blob([sw], { type: "application/javascript" })))
           .catch(() => {});
       }
 
       window.addEventListener("beforeunload", () => {
-        if (S.track)
-          localStorage.setItem("sonora_last", JSON.stringify(S.track));
+        if (S.track) localStorage.setItem("sonora_last", JSON.stringify(S.track));
       });
       document.addEventListener("click", startSilentAudio, { once: true, passive: true });
       document.addEventListener("touchstart", startSilentAudio, { once: true, passive: true });
