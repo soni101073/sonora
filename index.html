@@ -1454,6 +1454,10 @@
         }
         
         window.onerror = function(message, source, lineno, colno, error) {
+          const lowerMsg = String(message || "").toLowerCase();
+          if (lowerMsg.includes("script error")) {
+            return false;
+          }
           const details = `${source || 'inline'}:${lineno || 0}:${colno || 0}${error && error.stack ? '<br>' + error.stack.replace(/\\n/g, '<br>') : ''}`;
           showErr(message, details);
           return false;
@@ -1509,6 +1513,16 @@
       const ICO_HEART = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>`;
       const ICO_HEARTF = `<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>`;
       const ICO_TRASH = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>`;
+      // ── Image error handler — fallback to direct ytimg URL ──
+      function imgErr(el, videoId) {
+        el.onerror = null;
+        if (videoId) {
+          el.src = 'https://i.ytimg.com/vi/' + videoId + '/mqdefault.jpg';
+        } else {
+          el.style.display = 'none';
+        }
+      }
+
       const ICO_MUS_SM = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
       const ICO_FOLDER = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>`;
       const ICO_SAVE = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>`;
@@ -1524,6 +1538,9 @@
         "https://invidious.lunar.icu",
         "https://iv.melmac.space",
         "https://invidious.fdn.fr",
+        "https://invidious.privacyredirect.com",
+        "https://vid.puffyan.us",
+        "https://yt.cdaut.de",
       ];
       const PROXY = "https://corsproxy.io/?";
       let invI = 0;
@@ -1749,9 +1766,10 @@
 
       // Fallback: Fetch audio stream using public Cobalt extractor API instances.
       async function fetchCobaltAudio(videoId) {
+        // Cobalt v10 API (updated endpoint format)
         const cobaltInstances = [
-          "https://api.cobalt.tools/api/json",
-          "https://co.wuk.sh/api/json"
+          "https://api.cobalt.tools",
+          "https://co.wuk.sh"
         ];
         const tryOneCobalt = async (apiBase) => {
           const res = await fetch(apiBase, {
@@ -1762,7 +1780,6 @@
             },
             body: JSON.stringify({
               url: `https://www.youtube.com/watch?v=${videoId}`,
-              videoQuality: "144",
               downloadMode: "audio",
               audioFormat: "mp3",
               audioBitrate: "128"
@@ -1770,8 +1787,8 @@
           });
           if (!res.ok) throw new Error("Cobalt request failed");
           const data = await res.json();
-          if (data && data.url) {
-            return [data.url];
+          if (data && (data.url || data.urls)) {
+            return [data.url || data.urls];
           }
           throw new Error("No URL returned from Cobalt");
         };
@@ -1789,8 +1806,24 @@
 
       // Set the audio source and start playing immediately.
       // Remaining candidates sit in _pendingUrls for auto-retry on error.
-      async function playOnNative(videoId) {
+      async function playOnNative(t) {
         loadBar(true);
+        const au = getAudio();
+
+        // ── JioSaavn direct stream ──
+        if (t.source === 'saavn' && t.src) {
+          _pendingUrls = [];
+          au.src = t.src;
+          try {
+            await au.play();
+          } catch(e) {
+            if (e?.name === 'NotAllowedError') { S.playing = false; updPlayUI(); loadBar(false); toast('Tap ▶ to play'); }
+          }
+          return;
+        }
+
+        // ── YouTube via Invidious ──
+        const videoId = t.videoId;
         let urls = await fetchInvAudio(videoId);
         if (!urls || !urls.length) {
           console.log("Invidious failed, trying Cobalt...");
@@ -1802,7 +1835,6 @@
           S.playing = false; updPlayUI();
           return;
         }
-        const au    = getAudio();
         _pendingUrls = urls.slice(1);   // save fallbacks
         au.src       = urls[0];
         // Don't call au.load() explicitly — it can reset iOS user-activation state.
@@ -1939,6 +1971,31 @@
         });
       }
 
+      // ── JioSaavn Search (primary for Indian music) ──
+      async function saavnSearch(q) {
+        try {
+          const url = `https://saavn.dev/api/search/songs?query=${encodeURIComponent(q)}&page=1&limit=20`;
+          const ctrl = new AbortController();
+          const tid = setTimeout(() => ctrl.abort(), 8000);
+          const r = await fetch(url, { signal: ctrl.signal });
+          clearTimeout(tid);
+          if (!r.ok) throw 0;
+          const data = await r.json();
+          if (data.status !== 'SUCCESS' || !data.data?.results?.length) throw 0;
+          return data.data.results.map(s => ({
+            videoId: null,
+            src: (s.downloadUrl || []).slice(-1)[0]?.url || (s.downloadUrl || [])[2]?.url || null,
+            title: s.name,
+            artist: s.primaryArtists || s.singers || 'Unknown',
+            duration: s.duration,
+            thumb: (s.image || []).slice(-1)[0]?.url || null,
+            source: 'saavn'
+          })).filter(t => t.src);
+        } catch {
+          return null;
+        }
+      }
+
       // ── Search ──
       async function invSearch(q) {
         const fields = "videoId,title,author,lengthSeconds,videoThumbnails";
@@ -1985,19 +2042,29 @@
         document.getElementById("s-nr").classList.remove("on");
         document.getElementById("s-lbl").style.display = "none";
         document.getElementById("s-res").innerHTML = "";
-        const data = await invSearch(q);
+        // Try JioSaavn first — fast, reliable, great artwork, direct streams
+        let tracks = await saavnSearch(q);
+        if (!tracks || !tracks.length) {
+          // Fallback to Invidious/YouTube
+          const data = await invSearch(q);
+          if (data) {
+            tracks = data.slice(0, 20).map(r => ({
+              videoId: r.videoId,
+              src: null,
+              title: r.title,
+              artist: r.author,
+              duration: r.lengthSeconds,
+              // Use direct ytimg URL — never goes through an Invidious proxy
+              thumb: r.videoId ? `https://i.ytimg.com/vi/${r.videoId}/mqdefault.jpg` : bestThumb(r.videoThumbnails),
+              source: 'youtube'
+            }));
+          }
+        }
         document.getElementById("s-spin").classList.remove("on");
-        if (!data) {
+        if (!tracks || !tracks.length) {
           document.getElementById("s-nr").classList.add("on");
           return;
         }
-        const tracks = data.slice(0, 20).map((r) => ({
-          videoId: r.videoId,
-          title: r.title,
-          artist: r.author,
-          duration: r.lengthSeconds,
-          thumb: bestThumb(r.videoThumbnails),
-        }));
         document.getElementById("s-lbl").style.display = "block";
         renderList(document.getElementById("s-res"), tracks, "search");
       }
@@ -2029,7 +2096,7 @@
         updTrackUI();
         updPlayUI();
         loadBar(true);
-        playOnNative(t.videoId);
+        playOnNative(t);
       }
 
       function togPlay() {
@@ -2154,10 +2221,12 @@
         const fpEl = document.getElementById("fp");
         if (t.thumb) {
           img.src = t.thumb;
+          img.onerror = t.videoId ? function(){ this.onerror=null; this.src=`https://i.ytimg.com/vi/${t.videoId}/mqdefault.jpg`; } : null;
           img.style.display = "block";
           ph.style.display = "none";
           document.getElementById("mini-art").innerHTML =
-            `<img src="${t.thumb}" style="width:100%;height:100%;object-fit:cover;border-radius:10px" alt="">`;
+            `<img src="${t.thumb}" style="width:100%;height:100%;object-fit:cover;border-radius:10px" alt="" data-vid="${t.videoId || ''}" onerror="imgErr(this,this.dataset.vid)">`;
+
           // Dynamic blurred backdrop — Apple Music signature look
           fpEl.style.backgroundImage = `url(${t.thumb})`;
           fpEl.style.backgroundSize = "cover";
@@ -2242,7 +2311,7 @@
           el.className = "trk" + (now ? " now" : "");
           el.dataset.vid = t.videoId;
           el.innerHTML = `
-      <div class="trk-art">${t.thumb ? `<img src="${t.thumb}" loading="lazy" alt="">` : ICO_MUS_SM}</div>
+      <div class="trk-art">${t.thumb ? `<img src="${t.thumb}" loading="lazy" alt="" data-vid="${t.videoId || ''}" onerror="imgErr(this,this.dataset.vid)">` : ICO_MUS_SM}</div>
       <div class="trk-info">
         <div class="trk-name">${esc(t.title)}</div>
         <div class="trk-sub">${esc(t.artist || "Unknown")}</div>
@@ -2583,56 +2652,46 @@
             : [],
         });
         navigator.mediaSession.playbackState = S.playing ? "playing" : "paused";
-        const au = getAudio();
-        navigator.mediaSession.setActionHandler("play",  () => au.play().catch(() => {}));
-        navigator.mediaSession.setActionHandler("pause", () => au.pause());
+        navigator.mediaSession.setActionHandler("play", () => {
+          resumeSilentAudio();
+          getAudio().play().catch(() => {});
+        });
+        navigator.mediaSession.setActionHandler("pause", () => {
+          getAudio().pause();
+        });
         navigator.mediaSession.setActionHandler("previoustrack", prevT);
-        navigator.mediaSession.setActionHandler("nexttrack",     nextT);
+        navigator.mediaSession.setActionHandler("nexttrack", nextT);
         try {
-          navigator.mediaSession.setActionHandler("seekto", d => {
-            if (d.seekTime != null && au.duration) au.currentTime = d.seekTime;
-          });
-          navigator.mediaSession.setActionHandler("seekbackward", d => {
-            au.currentTime = Math.max(0, au.currentTime - (d.seekOffset || 10));
-          });
-          navigator.mediaSession.setActionHandler("seekforward", d => {
-            au.currentTime = Math.min(au.duration || 0, au.currentTime + (d.seekOffset || 10));
-          });
-        } catch(e) {}
-        try {
-          if (au.duration && !isNaN(au.duration))
+          const au = getAudio();
+          const dur = au.duration;
+          const pos = au.currentTime;
+          if (dur && !isNaN(dur) && dur > 0)
             navigator.mediaSession.setPositionState({
-              duration: au.duration,
-              playbackRate: au.playbackRate || 1,
-              position: au.currentTime || 0,
+              duration: dur,
+              playbackRate: 1,
+              position: Math.min(pos || 0, dur),
             });
-        } catch(e) {}
+        } catch (e) {}
       }
 
       if ("serviceWorker" in navigator) {
+        const sw = `const C='sn8';self.addEventListener('install',e=>{e.waitUntil(caches.open(C).then(c=>c.addAll([location.pathname])));self.skipWaiting();});self.addEventListener('activate',()=>self.clients.claim());self.addEventListener('fetch',e=>{if(e.request.url.includes('invidious')||e.request.url.includes('saavn')||e.request.url.includes('corsproxy'))return;e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));})`;
         navigator.serviceWorker
-          .register("sw.js?v=7")
-          .catch((err) => console.error("SW registration failed:", err));
+          .register(
+            URL.createObjectURL(
+              new Blob([sw], { type: "application/javascript" }),
+            ),
+          )
+          .catch(() => {});
       }
 
       window.addEventListener("beforeunload", () => {
         if (S.track)
-          safeStorage.setItem("sonora_last", JSON.stringify(S.track));
+          localStorage.setItem("sonora_last", JSON.stringify(S.track));
       });
-      document.addEventListener("click",      startSilentAudio, { once: true, passive: true });
-      document.addEventListener("touchstart",  startSilentAudio, { once: true, passive: true });
-      document.addEventListener("click",      unlockAudioEl,    { once: true, passive: true });
-      document.addEventListener("touchstart",  unlockAudioEl,    { once: true, passive: true });
-      
-      function initApp() {
-        checkReturning();
-        initDynamicInstances();
-      }
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", initApp);
-      } else {
-        initApp();
-      }
+      document.addEventListener("click", startSilentAudio, { once: true, passive: true });
+      document.addEventListener("touchstart", startSilentAudio, { once: true, passive: true });
+      document.addEventListener("DOMContentLoaded", checkReturning);
     </script>
   </body>
 </html>
